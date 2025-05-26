@@ -1,18 +1,14 @@
-import  zntrack
-import znh5md
-from laufband import Laufband
+import itertools
+from collections import defaultdict
+
 import ase
 import jax.numpy as jnp
-import itertools
 import matplotlib.pyplot as plt
-from collections import defaultdict
+import znh5md
+import zntrack
 from ase.data import chemical_symbols
-
-
-
-
-import jax.numpy as jnp
 from jax import vmap
+from laufband import Laufband
 
 
 def compute_mic_distances(positions: jnp.ndarray, cells: jnp.ndarray) -> jnp.ndarray:
@@ -47,6 +43,7 @@ def compute_mic_distances(positions: jnp.ndarray, cells: jnp.ndarray) -> jnp.nda
     # Vectorize over frames (N)
     return vmap(mic_frame)(positions, cells)
 
+
 def plot_rdf(rdfs: defaultdict):
     # find best number of subplots
     n_rdfs = len(rdfs)
@@ -54,7 +51,7 @@ def plot_rdf(rdfs: defaultdict):
     n_rows = (n_rdfs + n_cols - 1) // n_cols  # Ceiling division
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
     axes = axes.flatten() if n_rows > 1 else [axes]  # Flatten if multiple rows
-    
+
     for ax, ((a, b), g_r_list) in zip(axes, rdfs.items()):
         g_r_array = jnp.stack(g_r_list)
         g_r_mean = jnp.mean(g_r_array, axis=0)
@@ -62,7 +59,9 @@ def plot_rdf(rdfs: defaultdict):
         ax.plot(r, g_r_mean, label=f"{chemical_symbols[a]}-{chemical_symbols[b]}")
         ax.set_xlabel("Distance r (Å)")
         ax.set_ylabel("g(r)")
-        ax.set_title(f"Radial Distribution Function: {chemical_symbols[a]}-{chemical_symbols[b]}")
+        ax.set_title(
+            f"Radial Distribution Function: {chemical_symbols[a]}-{chemical_symbols[b]}"
+        )
         ax.legend()
         ax.grid(True)
     fig.tight_layout()
@@ -75,6 +74,7 @@ class RadialDistributionFunction(zntrack.Node):
     """
     Class to represent a radial distribution function (RDF) in a molecular dynamics simulation.
     """
+
     file: str = zntrack.deps_path()
     batch_size: int = zntrack.params()  # You can set a default or make it configurable
 
@@ -97,11 +97,13 @@ class RadialDistributionFunction(zntrack.Node):
         # Plot the results
         plot_rdf(rdfs_all)
 
-
-            
-    def compute_rdf(self, batch: list[ase.Atoms]) -> dict[tuple[int, int], tuple[jnp.ndarray, jnp.ndarray]]:
+    def compute_rdf(
+        self, batch: list[ase.Atoms]
+    ) -> dict[tuple[int, int], tuple[jnp.ndarray, jnp.ndarray]]:
         # Convert ASE objects to JAX arrays
-        positions = jnp.stack([jnp.array(atoms.positions) for atoms in batch])  # (N, i, 3)
+        positions = jnp.stack(
+            [jnp.array(atoms.positions) for atoms in batch]
+        )  # (N, i, 3)
         cells = jnp.stack([jnp.array(atoms.cell[:]) for atoms in batch])  # (N, 3, 3)
         atomic_numbers = jnp.array(batch[0].get_atomic_numbers())  # (i,)
 
@@ -120,7 +122,7 @@ class RadialDistributionFunction(zntrack.Node):
         bin_width = 0.1
         bin_edges = jnp.arange(0, r_max + bin_width, bin_width)
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-        shell_volumes = (4 / 3) * jnp.pi * (bin_edges[1:]**3 - bin_edges[:-1]**3)
+        shell_volumes = (4 / 3) * jnp.pi * (bin_edges[1:] ** 3 - bin_edges[:-1] ** 3)
 
         # Volume per frame (averaged)
         volume = jnp.mean(jnp.linalg.det(cells))
@@ -132,7 +134,9 @@ class RadialDistributionFunction(zntrack.Node):
 
         for a, b in itertools.combinations_with_replacement(sorted(unique_species), 2):
             # Mask for matching pairs (upper triangle only)
-            frame_mask = ((species_i == a) & (species_j == b)) | ((species_i == b) & (species_j == a))  # shape: (n_pairs,)
+            frame_mask = ((species_i == a) & (species_j == b)) | (
+                (species_i == b) & (species_j == a)
+            )  # shape: (n_pairs,)
             frame_mask = jnp.asarray(frame_mask)
 
             # Repeat this mask for each frame
