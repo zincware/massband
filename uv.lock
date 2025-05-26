@@ -1344,6 +1344,7 @@ dependencies = [
     { name = "jax" },
     { name = "laufband" },
     { name = "lazy-loader" },
+    { name = "matplotlib" },
     { name = "znh5md" },
     { name = "zntrack" },
 ]
@@ -1358,6 +1359,7 @@ requires-dist = [
     { name = "jax", specifier = ">=0.6.1" },
     { name = "laufband", specifier = ">=0.1.3" },
     { name = "lazy-loader", specifier = ">=0.4" },
+    { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "znh5md", specifier = ">=0.4.5" },
     { name = "zntrack", specifier = ">=0.8.7" },
 ]

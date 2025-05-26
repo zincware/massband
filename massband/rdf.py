@@ -3,6 +3,11 @@ import znh5md
 from laufband import Laufband
 import ase
 import jax.numpy as jnp
+import itertools
+import matplotlib.pyplot as plt
+from collections import defaultdict
+
+
 
 import jax.numpy as jnp
 from jax import vmap
@@ -53,41 +58,92 @@ class RadialDistributionFunction(zntrack.Node):
         size = len(io)
         batch_start_index = list(range(0, size, self.batch_size))
         worker = Laufband(batch_start_index)
+
+        # Collect RDFs for each species pair over all batches
+        rdfs_all = defaultdict(list)
+
         for start in worker:
             end = min(start + self.batch_size, size)
             batch = io[start:end]
-            rdf = self.compute_rdf(batch)
-        
+            rdf_batch = self.compute_rdf(batch)
+            for pair, (r, g_r) in rdf_batch.items():
+                rdfs_all[pair].append(g_r)
 
-    def compute_rdf(self, batch: list[ase.Atoms]) -> dict[tuple[int, int], list]:
-        # return the RDF for each permutation of the species, e.g. for H2O have O-O, O-H, H-H where 
+        # Combine results: average g_r over batches
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        for (a, b), g_r_list in rdfs_all.items():
+            g_r_array = jnp.stack(g_r_list)
+            g_r_mean = jnp.mean(g_r_array, axis=0)
+            r = 0.5 * (jnp.arange(len(g_r_mean)) + 0.5) * 0.1  # Assuming bin_width = 0.1
+
+            ax.plot(r, g_r_mean, label=f"{a}-{b}")
+
+        ax.set_xlabel("Distance r (Å)")
+        ax.set_ylabel("g(r)")
+        ax.set_title("Radial Distribution Function")
+        ax.legend()
+        ax.grid(True)
+
+        fig.tight_layout()
+        fig.savefig("rdf_plot.png")
+        plt.close(fig)
+
+
+            
+    def compute_rdf(self, batch: list[ase.Atoms]) -> dict[tuple[int, int], tuple[jnp.ndarray, jnp.ndarray]]:
         # Convert ASE objects to JAX arrays
         positions = jnp.stack([jnp.array(atoms.positions) for atoms in batch])  # (N, i, 3)
         cells = jnp.stack([jnp.array(atoms.cell[:]) for atoms in batch])  # (N, 3, 3)
-        species = jnp.stack([jnp.array(atoms.get_chemical_symbols()) for atoms in batch])  # (N, i)
+        atomic_numbers = jnp.array(batch[0].get_atomic_numbers())  # (i,)
 
         N_frames, N_atoms, _ = positions.shape
         distances = compute_mic_distances(positions, cells)  # (N, i, i)
 
-        # Flatten upper triangle distances (i < j), exclude self-distances (i == j)
-        i, j = jnp.triu_indices(N_atoms, k=1)
-        pairwise_dists = distances[:, i, j].reshape(-1)  # shape: (N_frames * num_pairs)
+        # Only take upper triangle (i < j)
+        i, j = jnp.triu_indices(N_atoms, k=1)  # (n_pairs,)
+        species_i = atomic_numbers[i]  # (n_pairs,)
+        species_j = atomic_numbers[j]  # (n_pairs,)
 
-        # Define histogram bins
+        pairwise_dists = distances[:, i, j].reshape(-1)  # (N_frames * n_pairs,)
+
+        # Define bins
         r_max = 10.0
         bin_width = 0.1
-        bin_edges = jnp.arange(0, r_max + bin_width, bin_width)  # includes right edge
+        bin_edges = jnp.arange(0, r_max + bin_width, bin_width)
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-
-        # Histogram the distances
-        hist = jnp.histogram(pairwise_dists, bins=bin_edges)[0]  # shape: (num_bins,)
-
-        # Normalize RDF
-        volume = jnp.mean(jnp.linalg.det(cells))  # average volume across frames
-        number_density = (N_atoms * (N_atoms - 1) / 2) * N_frames / volume  # total pairs / volume
-
         shell_volumes = (4 / 3) * jnp.pi * (bin_edges[1:]**3 - bin_edges[:-1]**3)
-        ideal_counts = number_density * shell_volumes  # expected count per shell
-        g_r = hist / ideal_counts  # RDF
 
-        return bin_centers, g_r
+        # Volume per frame (averaged)
+        volume = jnp.mean(jnp.linalg.det(cells))
+
+        # Unique atomic numbers
+        unique_species = set(atomic_numbers.tolist())
+
+        rdf_by_species = {}
+
+        for a, b in itertools.combinations_with_replacement(sorted(unique_species), 2):
+            # Mask for matching pairs (upper triangle only)
+            frame_mask = ((species_i == a) & (species_j == b)) | ((species_i == b) & (species_j == a))  # shape: (n_pairs,)
+            frame_mask = jnp.asarray(frame_mask)
+
+            # Repeat this mask for each frame
+            full_mask = jnp.tile(frame_mask, N_frames)  # shape: (N_frames * n_pairs,)
+            selected_dists = pairwise_dists[full_mask]
+
+            if selected_dists.size == 0:
+                continue  # skip empty
+
+            # Histogram
+            hist = jnp.histogram(selected_dists, bins=bin_edges)[0]
+
+            # Estimate number density of this pair type
+            n_pair_per_frame = frame_mask.sum()
+            number_density = (n_pair_per_frame * N_frames) / volume
+
+            ideal_counts = number_density * shell_volumes
+            g_r = hist / ideal_counts
+
+            rdf_by_species[(int(a), int(b))] = (bin_centers, g_r)
+
+        return rdf_by_species
