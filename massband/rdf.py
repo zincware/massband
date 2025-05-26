@@ -6,6 +6,8 @@ import jax.numpy as jnp
 import itertools
 import matplotlib.pyplot as plt
 from collections import defaultdict
+from ase.data import chemical_symbols
+
 
 
 
@@ -45,12 +47,35 @@ def compute_mic_distances(positions: jnp.ndarray, cells: jnp.ndarray) -> jnp.nda
     # Vectorize over frames (N)
     return vmap(mic_frame)(positions, cells)
 
+def plot_rdf(rdfs: defaultdict):
+    # find best number of subplots
+    n_rdfs = len(rdfs)
+    n_cols = 3
+    n_rows = (n_rdfs + n_cols - 1) // n_cols  # Ceiling division
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+    axes = axes.flatten() if n_rows > 1 else [axes]  # Flatten if multiple rows
+    
+    for ax, ((a, b), g_r_list) in zip(axes, rdfs.items()):
+        g_r_array = jnp.stack(g_r_list)
+        g_r_mean = jnp.mean(g_r_array, axis=0)
+        r = 0.5 * (jnp.arange(len(g_r_mean)) + 0.5) * 0.1
+        ax.plot(r, g_r_mean, label=f"{chemical_symbols[a]}-{chemical_symbols[b]}")
+        ax.set_xlabel("Distance r (Å)")
+        ax.set_ylabel("g(r)")
+        ax.set_title(f"Radial Distribution Function: {chemical_symbols[a]}-{chemical_symbols[b]}")
+        ax.legend()
+        ax.grid(True)
+    fig.tight_layout()
+    # Save the figure
+    fig.savefig("rdf_plot.png")
+    plt.close(fig)  # Close the figure to free memory
+
+
 class RadialDistributionFunction(zntrack.Node):
     """
     Class to represent a radial distribution function (RDF) in a molecular dynamics simulation.
     """
     file: str = zntrack.deps_path()
-
     batch_size: int = zntrack.params()  # You can set a default or make it configurable
 
     def run(self):
@@ -69,25 +94,8 @@ class RadialDistributionFunction(zntrack.Node):
             for pair, (r, g_r) in rdf_batch.items():
                 rdfs_all[pair].append(g_r)
 
-        # Combine results: average g_r over batches
-        fig, ax = plt.subplots(figsize=(8, 6))
-
-        for (a, b), g_r_list in rdfs_all.items():
-            g_r_array = jnp.stack(g_r_list)
-            g_r_mean = jnp.mean(g_r_array, axis=0)
-            r = 0.5 * (jnp.arange(len(g_r_mean)) + 0.5) * 0.1  # Assuming bin_width = 0.1
-
-            ax.plot(r, g_r_mean, label=f"{a}-{b}")
-
-        ax.set_xlabel("Distance r (Å)")
-        ax.set_ylabel("g(r)")
-        ax.set_title("Radial Distribution Function")
-        ax.legend()
-        ax.grid(True)
-
-        fig.tight_layout()
-        fig.savefig("rdf_plot.png")
-        plt.close(fig)
+        # Plot the results
+        plot_rdf(rdfs_all)
 
 
             
