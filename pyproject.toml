@@ -13,6 +13,7 @@ dependencies = [
     "znh5md>=0.4.5",
     "zntrack>=0.8.7",
 ]
+license = "MIT"
 
 [build-system]
 requires = ["hatchling"]
