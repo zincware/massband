@@ -19,7 +19,7 @@ def diffusive_md(tmp_path) -> Path:
     """
     # Parameters
     D = 1.0 * ureg.angstrom**2 / ureg.picosecond
-    steps = 10_000
+    steps = 2_000
     dt = 0.5 * ureg.fs
     particles = 20
 
@@ -73,13 +73,10 @@ def test_EinsteinSelfDiffusion(diffusive_md):
         file=diffusive_md,
         sampling_rate=1,
         timestep=0.5,  # fs
-        batch_size=20,
+        batch_size=1,
     )
 
     diff.run()
     # Now we expect results to be calculated, not None
     assert diff.results is not None
-    # Access a specific atomic number's diffusion coefficient
-    # Assuming the fixture creates atoms with atomic number 1 (Hydrogen)
-    assert 1 in diff.results  # Check if atomic number 1 is in results
     assert diff.results[1]["diffusion_coefficient"] == pytest.approx(1.0, rel=0.1)

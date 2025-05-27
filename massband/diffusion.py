@@ -1,6 +1,6 @@
 from collections import defaultdict
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Literal
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -8,44 +8,51 @@ import pint
 import znh5md
 import zntrack
 from ase.data import chemical_symbols
-from jax import jit
-from jax.numpy.fft import irfft, rfft
+from jax import jit, vmap
+import jax.lax as jlax
 from tqdm import tqdm
+from massband.utils import unwrap_positions
 
 ureg = pint.UnitRegistry()
 logger = logging.getLogger(__name__)
 
 
 @jit
-def unwrap_positions(
-    pos: jnp.ndarray, cells: jnp.ndarray, inv_cells: jnp.ndarray
-) -> jnp.ndarray:
-    frac = jnp.einsum("nij,nj->ni", inv_cells, pos)
-    delta_frac = jnp.diff(frac, axis=0)
-    delta_frac -= jnp.round(delta_frac)
-    frac_unwrapped = jnp.concatenate(
-        [frac[:1], frac[:1] + jnp.cumsum(delta_frac, axis=0)], axis=0
-    )
-    return jnp.einsum("nij,nj->ni", cells, frac_unwrapped)
-
-
-@jit
-def compute_msd_fft(
+def compute_msd_direct(
     x: jnp.ndarray, cell: jnp.ndarray, inv_cell: jnp.ndarray
 ) -> jnp.ndarray:
-    x = unwrap_positions(x, cell, inv_cell)
-    N = x.shape[0]
+    """Compute the Mean Squared Displacement (MSD) using direct method.
+    
+    Parameters
+    ----------
+    x : jnp.ndarray
+        Positions of a single atom in cartesian coordinates, shape (n_frames, 3).
+    cell : jnp.ndarray
+        Cell vectors for each frame, shape (n_frames, 3, 3).
+    inv_cell : jnp.ndarray
+        Inverse cell vectors for each frame, shape (n_frames, 3, 3).
 
-    norm2 = jnp.sum(x**2, axis=1)
-    x_padded = jnp.concatenate([x, jnp.zeros_like(x)], axis=0)
+    Returns
+    -------
+    jnp.ndarray
+        Mean Squared Displacement for each time step, shape (n_frames,).
+    """
+    x_unwrapped = unwrap_positions(x, cell, inv_cell)
+    N = x_unwrapped.shape[0]
 
-    fx = rfft(x_padded, axis=0)
-    acf = irfft(fx * jnp.conj(fx), axis=0)[:N]
-    acf = jnp.sum(acf, axis=1)
+    def msd_at_dt(dt):
+        displacements = x_unwrapped[dt:] - x_unwrapped[:-dt]
+        squared_displacements = jnp.sum(displacements**2, axis=1)
+        return jnp.mean(squared_displacements)
 
-    count = jnp.arange(N, 0, -1)
-    msd = norm2[None, :] + norm2[:, None] - 2 * acf[:, None] / count[:, None]
-    return jnp.mean(msd, axis=1)
+    msd = jnp.zeros(N)
+
+    # Avoid looping over dt=0 because displacement is zero
+    msd = msd.at[0].set(0.0)
+    msd_values = jnp.array([msd_at_dt(dt) for dt in range(1, N)])
+    msd = msd.at[1:].set(msd_values)
+
+    return msd
 
 
 class EinsteinSelfDiffusion(zntrack.Node):
@@ -56,6 +63,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
     timestep: float = zntrack.params()
     batch_size: int = zntrack.params(64)
     fit_window: Tuple[float, float] = zntrack.params((0.2, 0.8))
+    method: Literal["direct"] = zntrack.params("direct")
 
     def get_cells(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
         io = znh5md.IO(
@@ -96,6 +104,8 @@ class EinsteinSelfDiffusion(zntrack.Node):
         timestep_ps = timestep_fs / 1000  # fs -> ps
 
         for Z, msd_array in msds.items():
+            # TODO: self.fit_window is not used here
+            # TODO: save fit parameters for plotting later
             msd_avg = jnp.mean(jnp.stack(msd_array), axis=0)
             time_ps = jnp.arange(msd_avg.shape[0]) * timestep_ps
             D = jnp.where(time_ps > 0, msd_avg / (6 * time_ps), 0)
@@ -194,10 +204,9 @@ class EinsteinSelfDiffusion(zntrack.Node):
             Z_batch = atomic_numbers[start:end]
 
             pos = self.get_positions(atom_slice)  # shape: (n_frames, batch_size, 3)
-
-            for local_idx, Z in enumerate(Z_batch):
-                single_pos = pos[:, local_idx, :]  # shape: (n_frames, 3)
-                msd = compute_msd_fft(single_pos, cells, inv_cells)
+            pos = jnp.transpose(pos, (1, 0, 2))
+            results = vmap(lambda x: compute_msd_direct(x, cells, inv_cells))(pos)
+            for msd, Z in zip(results, Z_batch):
                 msds[Z].append(msd)
 
         results = self.compute_diffusion_coefficients(msds, timestep_fs)
