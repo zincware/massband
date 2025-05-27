@@ -10,7 +10,7 @@ dependencies = [
     "lazy-loader>=0.4",
     "matplotlib>=3.10.3",
     "pint>=0.24.4",
-    "znh5md>=0.4.5",
+    "znh5md>=0.4.6",
     "zntrack>=0.8.7",
 ]
 license = "MIT"
@@ -26,4 +26,4 @@ dev = [
 ]
 
 [tool.uv.sources]
-znh5md = { path = "../ZnH5MD", editable = true }
+znh5md = { git = "https://github.com/zincware/znh5md" }

@@ -587,15 +587,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dill"
-version = "0.4.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/12/80/630b4b88364e9a8c8c5797f4602d0f76ef820909ee32f0bacb9f90654042/dill-0.4.0.tar.gz", hash = "sha256:0633f1d2df477324f53a895b02c901fb961bdbf65a17122586ea7019292cbcf0", size = 186976, upload-time = "2025-04-16T00:41:48.867Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/50/3d/9373ad9c56321fdab5b41197068e1d8c25883b3fea29dd361f9b55116869/dill-0.4.0-py3-none-any.whl", hash = "sha256:44f54bf6412c2c8464c14e8243eb163690a9800dbe2c367330883b19c7561049", size = 119668, upload-time = "2025-04-16T00:41:47.671Z" },
-]
-
-[[package]]
 name = "diskcache"
 version = "5.6.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1587,7 +1578,7 @@ requires-dist = [
     { name = "lazy-loader", specifier = ">=0.4" },
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "pint", specifier = ">=0.24.4" },
-    { name = "znh5md", editable = "../ZnH5MD" },
+    { name = "znh5md", git = "https://github.com/zincware/znh5md" },
     { name = "zntrack", specifier = ">=0.8.7" },
 ]
 
@@ -2066,19 +2057,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/20/bb/52b15ddf7b7706ed591134a895dbf6e41c8348171fb635e655e0a4bbb0ea/pint-0.24.4.tar.gz", hash = "sha256:35275439b574837a6cd3020a5a4a73645eb125ce4152a73a2f126bf164b91b80", size = 342225, upload-time = "2024-11-07T16:29:46.061Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/16/bd2f5904557265882108dc2e04f18abc05ab0c2b7082ae9430091daf1d5c/Pint-0.24.4-py3-none-any.whl", hash = "sha256:aa54926c8772159fcf65f82cc0d34de6768c151b32ad1deb0331291c38fe7659", size = 302029, upload-time = "2024-11-07T16:29:43.976Z" },
-]
-
-[[package]]
-name = "plams"
-version = "2025.102"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "dill" },
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/17/60/b606dbbba850621de05ad5fdede7c2a796cad5dd781b0f5e01ce0bfc1329/plams-2025.102.tar.gz", hash = "sha256:7780779e76e5c137a2be40fe28987c9b86f37dec016795d56bfe7ac68b6750fa", size = 15928415, upload-time = "2025-04-28T10:00:25.75Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/28/7a0a80927644d15f2961e2f9f8c9fe34d95d4ebc3431b9c3c48affc15bd6/plams-2025.102-py3-none-any.whl", hash = "sha256:6496ec565db665061b834f6f6c98cd597dc36c1e3352d64ab2f02c5d12fd5ca7", size = 16115863, upload-time = "2025-04-28T10:00:22.051Z" },
 ]
 
 [[package]]
@@ -3167,41 +3145,13 @@ wheels = [
 
 [[package]]
 name = "znh5md"
-version = "0.4.5"
-source = { editable = "../ZnH5MD" }
+version = "0.4.6"
+source = { git = "https://github.com/zincware/znh5md#111f0f297056e5f9f08735802a7b2c9dbced8c0c" }
 dependencies = [
     { name = "ase" },
     { name = "h5py" },
-    { name = "plams" },
     { name = "tqdm" },
     { name = "typer" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "ase", specifier = ">=3.24.0" },
-    { name = "h5py", specifier = ">=3.12.1" },
-    { name = "plams", specifier = ">=2025.102" },
-    { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "typer", specifier = ">=0.15.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "chemfiles", specifier = ">=0.10.4" },
-    { name = "coverage", specifier = ">=7.6.10" },
-    { name = "mdanalysis", specifier = ">=2.8.0" },
-    { name = "mdtraj", specifier = ">=1.10.2" },
-    { name = "networkx", specifier = ">=3.4.2" },
-    { name = "numpy", specifier = "<2" },
-    { name = "pandas", specifier = ">=2.2.3" },
-    { name = "plams", specifier = ">=2025.102" },
-    { name = "pyh5md", specifier = ">=1.0.0" },
-    { name = "pytest", specifier = ">=8.3.4" },
-    { name = "pytest-benchmark", extras = ["histogram"], specifier = ">=5.1.0" },
-    { name = "pytest-cov", specifier = ">=6.1.1" },
-    { name = "rdkit2ase", specifier = ">=0.1.4" },
-    { name = "ruff", specifier = ">=0.11.8" },
 ]
 
 [[package]]
