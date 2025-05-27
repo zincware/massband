@@ -1,3 +1,7 @@
+from collections import defaultdict
+from datetime import datetime
+
+import h5py
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import pint
@@ -6,88 +10,99 @@ import zntrack
 from ase.data import chemical_symbols
 from jax import jit, vmap
 from jax.numpy.fft import irfft, rfft
-import jax.lax 
+from tqdm import tqdm
 
 ureg = pint.UnitRegistry()
 
 
-def compute_msd_fft(x: jnp.ndarray) -> jnp.ndarray:
-    """
-    Compute the mean squared displacement (MSD) using FFT for a single particle.
+@jit
+def unwrap_positions(
+    pos: jnp.ndarray, cells: jnp.ndarray, inv_cells: jnp.ndarray
+) -> jnp.ndarray:
+    frac = jnp.einsum("nij,nj->ni", inv_cells, pos)
+    delta_frac = jnp.diff(frac, axis=0)
+    delta_frac -= jnp.round(delta_frac)
+    frac_unwrapped = jnp.concatenate(
+        [frac[:1], frac[:1] + jnp.cumsum(delta_frac, axis=0)], axis=0
+    )
+    return jnp.einsum("nij,nj->ni", cells, frac_unwrapped)
 
-    Parameters:
-    x: jnp.ndarray of shape (N, 3), unwrapped trajectory for one particle
 
-    Returns:
-    msd: jnp.ndarray of shape (N,)
-    """
+@jit
+def compute_msd_fft(
+    x: jnp.ndarray, cell: jnp.ndarray, inv_cell: jnp.ndarray
+) -> jnp.ndarray:
+    x = unwrap_positions(x, cell, inv_cell)
     N = x.shape[0]
 
-    norm2 = jnp.sum(x**2, axis=1)  # (N,)
+    norm2 = jnp.sum(x**2, axis=1)
 
-    x_padded = jnp.concatenate([x, jnp.zeros_like(x)], axis=0)  # (2N, 3)
+    x_padded = jnp.concatenate([x, jnp.zeros_like(x)], axis=0)
     fx = rfft(x_padded, axis=0)
-    acf = irfft(fx * jnp.conj(fx), axis=0)[:N]  # (N, 3)
-    acf = jnp.sum(acf, axis=1)  # (N,)
+    acf = irfft(fx * jnp.conj(fx), axis=0)[:N]
+    acf = jnp.sum(acf, axis=1)
 
-    count = jnp.arange(N, 0, -1)  # (N,)
-
-    msd = norm2[None, :] + norm2[:, None] - 2 * acf[:, None] / count[:, None]  # (N, N)
-    return jnp.mean(msd, axis=1)  # (N,)
+    count = jnp.arange(N, 0, -1)
+    msd = norm2[None, :] + norm2[:, None] - 2 * acf[:, None] / count[:, None]
+    return jnp.mean(msd, axis=1)
 
 
 class EinsteinSelfDiffusion(zntrack.Node):
     file: str = zntrack.deps_path()
     sampling_rate: int = zntrack.params()
     timestep: float = zntrack.params()
+    batch_size: int = zntrack.params(64)
 
-    def run(self):
-        io = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
-        size = len(io)
-        batch_indices = range(0, size, 10)
-        atomic_numbers = io[0].get_atomic_numbers()
-        jit_compute_msd_fft = jit(compute_msd_fft)
+    def get_cells(self):
+        io = znh5md.IO(
+            self.file, variable_shape=False, include=["position", "box"], mask=[]
+        )
+        cells = [atoms.cell[:] for atoms in io[:]]
+        cells = jnp.stack(cells)
+        inv_cells = jnp.linalg.inv(cells)
+        return cells, inv_cells
 
-        # Map atomic number → indices
-        atom_groups = {}
-        for i, Z in enumerate(atomic_numbers):
-            atom_groups.setdefault(Z, []).append(i)
+    def get_atomic_numbers(self) -> list[int]:
+        io = znh5md.IO(self.file, variable_shape=False, include=["position"])
+        return io[0].get_atomic_numbers().tolist()
 
-        # Analyze each group
+    def get_positions(self, index: slice) -> jnp.ndarray:
+        """Load unwrapped positions for a slice of atom indices."""
+        print(f"{datetime.now()} Loading positions for index {index}")
+        io = znh5md.IO(
+            self.file, variable_shape=False, include=["position"], mask=index
+        )
+        pos = jnp.stack([atoms.positions for atoms in io[:]])
+        print(f"{datetime.now()} Loaded positions shape: {pos.shape}")
+        return pos  # shape: (n_frames, n_atoms_in_batch, 3)
+
+    def compute_diffusion_coefficients(self, msds: dict, timestep_fs: float) -> dict:
         results = {}
-        for Z, indices in atom_groups.items():
-            print(f"Analyzing atomic number {Z} with {len(indices)} atoms")
-            pos, cells = self._extract_trajectory(io, batch_indices, indices)
-            unwrapped = self._unwrap_positions(pos, cells)  # shape (N, M, 3)
+        timestep_ps = timestep_fs / 1000  # fs -> ps
 
-            # Map over particles: shape (M, N) → then mean over axis 0
-            # per_particle_msd = vmap(jit_compute_msd_fft, in_axes=1)(unwrapped)
-            per_particle_msd = jax.lax.map(
-                jit_compute_msd_fft, unwrapped.transpose(1, 0, 2)
-            )
-            msd = jnp.mean(per_particle_msd, axis=0)  # shape (N,)
+        for Z, msd_array in msds.items():
+            msd_avg = jnp.mean(jnp.stack(msd_array), axis=0)
+            time_ps = jnp.arange(msd_avg.shape[0]) * timestep_ps
+            D = msd_avg / (6 * time_ps)
 
-            timestep = self.timestep * ureg.fs * self.sampling_rate
-            time_ps = jnp.arange(msd.shape[0]) * timestep.magnitude / 1000
-            D = msd / (6 * time_ps)
-            # exclude first 20 and last 20 percent of data
+            # Handle division by zero in first frame
+            D = jnp.where(time_ps > 0, D, 0)
+
             size = D.shape[0]
-            start = int(size * 0.2)
-            end = int(size * 0.8)
-            D = D[start:end]
-            # average over the remaining data
-            D_avg = jnp.mean(D)
+            start, end = int(size * 0.2), int(size * 0.8)
+            D_avg = jnp.mean(D[start:end])
 
             results[Z] = {
                 "diffusion_coefficient": D_avg,
-                "msd": msd,
+                "msd": msd_avg,
                 "time_ps": time_ps,
             }
+
             print(f"Z={Z}: D = {D_avg:.4f} Å²/ps")
 
-        self.results = results
+        return results
 
-        # Plot MSD curves with fit window and fit line
+    def plot_results(self, results: dict):
         n_species = len(results)
         n_cols = 3
         n_rows = (n_species + n_cols - 1) // n_cols
@@ -95,24 +110,18 @@ class EinsteinSelfDiffusion(zntrack.Node):
         axes = axes.flatten() if n_rows > 1 else [axes]
 
         for ax, (Z, data) in zip(axes, results.items()):
-            time_ps = data["time_ps"]
-            msd = data["msd"]
-
-            # Fit window
+            time_ps, msd = data["time_ps"], data["msd"]
             size = len(time_ps)
-            start = int(size * 0.2)
-            end = int(size * 0.8)
+            start, end = int(size * 0.2), int(size * 0.8)
 
             fit_time = time_ps[start:end]
             fit_msd = msd[start:end]
 
-            # Linear fit (least squares)
             A = jnp.vstack([fit_time, jnp.ones_like(fit_time)]).T
             slope, intercept = jnp.linalg.lstsq(A, fit_msd, rcond=None)[0]
             fit_line = slope * time_ps + intercept
-            D_fit = slope / 6  # since MSD = 6Dt
+            D_fit = slope / 6
 
-            # Plot
             ax.plot(time_ps, msd, label="MSD")
             ax.plot(
                 time_ps,
@@ -134,7 +143,6 @@ class EinsteinSelfDiffusion(zntrack.Node):
             ax.legend()
             ax.grid(True)
 
-        # Hide unused axes
         for ax in axes[n_species:]:
             ax.axis("off")
 
@@ -142,22 +150,26 @@ class EinsteinSelfDiffusion(zntrack.Node):
         plt.savefig("msd_species.png")
         plt.show()
 
-    def _extract_trajectory(self, io, batch_indices, selected_indices):
-        pos = []
-        cells = []
-        io.mask = selected_indices
-        frames = io[:]
-        for atoms in frames:
-            pos.append(atoms.positions)
-            cells.append(atoms.cell[:])
-        return jnp.stack(pos), jnp.stack(cells)
+    def run(self):
+        cells, inv_cells = self.get_cells()
+        atomic_numbers = self.get_atomic_numbers()
+        timestep_fs = self.timestep * ureg.fs * self.sampling_rate
+        msds = defaultdict(list)
 
-    def _unwrap_positions(self, pos, cells):
-        inv_cells = jnp.linalg.inv(cells)
-        frac = jnp.einsum("nij,nmj->nmi", inv_cells, pos)
-        delta_frac = jnp.diff(frac, axis=0)
-        delta_frac -= jnp.round(delta_frac)
-        frac_unwrapped = jnp.concatenate(
-            [frac[:1], frac[:1] + jnp.cumsum(delta_frac, axis=0)], axis=0
-        )
-        return jnp.einsum("nij,nmj->nmi", cells, frac_unwrapped)
+        n_atoms = len(atomic_numbers)
+
+        for start in tqdm(range(0, n_atoms, self.batch_size)):
+            end = min(start + self.batch_size, n_atoms)
+            atom_slice = slice(start, end)
+            Z_batch = atomic_numbers[start:end]
+
+            pos = self.get_positions(atom_slice)  # shape: (n_frames, batch_size, 3)
+
+            for local_idx, Z in enumerate(Z_batch):
+                single_pos = pos[:, local_idx, :]  # shape: (n_frames, 3)
+                msd = compute_msd_fft(single_pos, cells, inv_cells)
+                msds[Z].append(msd)
+
+        results = self.compute_diffusion_coefficients(msds, timestep_fs.magnitude)
+        self.results = results
+        self.plot_results(results)
