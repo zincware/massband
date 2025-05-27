@@ -15,7 +15,7 @@ ureg = pint.UnitRegistry()
 def diffusive_positions() -> np.ndarray:
     # Parameters
     D = 1.0 * ureg.angstrom**2 / ureg.picosecond
-    steps = 2_000
+    steps = 100
     dt = 0.5 * ureg.fs
     particles = 20
 

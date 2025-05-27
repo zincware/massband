@@ -68,7 +68,7 @@ def fn1(rsq, SAB, SUMSQ, N):
     MSD_0 = SUMSQ - 2 * SAB[0] * N
 
     cs1 = jnp.cumsum(rsq)[:-1]
-    
+
     rsq_tail_reversed = rsq[1:][::-1]
     cs2 = jnp.cumsum(rsq_tail_reversed)
 
@@ -82,9 +82,9 @@ def fn1(rsq, SAB, SUMSQ, N):
 def _compute_msd_fft(pos: np.ndarray, n_fft: int, N: int) -> jnp.ndarray:
     rsq = jnp.sum(pos**2, axis=1)
 
-    SAB = autocorrelation_1d_jax_jit(pos[:,0], N, n_fft)
+    SAB = autocorrelation_1d_jax(pos[:,0], N, n_fft)
     for i in range(1, pos.shape[1]):
-        SAB += autocorrelation_1d_jax_jit(pos[:,i], N, n_fft)
+        SAB += autocorrelation_1d_jax(pos[:,i], N, n_fft)
 
     SUMSQ = 2*np.sum(rsq)
 
@@ -92,7 +92,6 @@ def _compute_msd_fft(pos: np.ndarray, n_fft: int, N: int) -> jnp.ndarray:
 
     return MSD
 
-_compute_msd_fft_jit = jit(_compute_msd_fft, static_argnames=("n_fft", "N"))
 
 def compute_msd_fft(positions: np.ndarray) -> np.ndarray:
     pos = np.asarray(positions)
@@ -102,6 +101,8 @@ def compute_msd_fft(positions: np.ndarray) -> np.ndarray:
         return np.array([], dtype=pos.dtype)
     if pos.ndim==1:
         pos = pos.reshape((-1,1))
+    
+    _compute_msd_fft_jit = jit(_compute_msd_fft, static_argnames=("n_fft", "N"))
 
     return _compute_msd_fft_jit(pos.reshape((N, -1)), n_fft=n_fft, N=N)
 
@@ -113,7 +114,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
     timestep: float = zntrack.params()
     batch_size: int = zntrack.params(64)
     fit_window: Tuple[float, float] = zntrack.params((0.2, 0.8))
-    method: Literal["direct"] = zntrack.params("direct")
+    method: Literal["direct", "fft"] = zntrack.params("fft")
 
     def get_cells(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
         io = znh5md.IO(
@@ -239,10 +240,20 @@ class EinsteinSelfDiffusion(zntrack.Node):
         n_atoms = len(atomic_numbers)
         logger.info(f"Starting MSD calculation for {n_atoms} atoms")
 
-        @jit
-        def msd_fn(x, cell, inv_cell):
-            x_unwrapped = unwrap_positions(x, cell, inv_cell)
-            return compute_msd_direct(x_unwrapped)
+        if self.method == "direct":
+            @jit
+            def msd_fn(x, cell, inv_cell):
+                x_unwrapped = unwrap_positions(x, cell, inv_cell)
+                return compute_msd_direct(x_unwrapped)
+            logger.info("Using direct MSD computation method")
+        elif self.method == "fft":
+
+            def msd_fn(x, cell, inv_cell):
+                x_unwrapped = unwrap_positions(x, cell, inv_cell)
+                return compute_msd_fft(x_unwrapped)
+            logger.info("Using FFT-based MSD computation method")
+        else:
+            raise ValueError(f"Unknown method: {self.method}. Use 'direct' or 'fft'.")
 
         # Process atoms in batches
         for start in tqdm(range(0, n_atoms, self.batch_size), desc="Processing atoms"):
@@ -251,11 +262,21 @@ class EinsteinSelfDiffusion(zntrack.Node):
             Z_batch = atomic_numbers[start:end]
 
             pos = self.get_positions(atom_slice)  # shape: (n_frames, batch_size, 3)
-            pos = jnp.transpose(pos, (1, 0, 2))
-            results = vmap(lambda x: msd_fn(x, cells, inv_cells))(pos)
+            if self.method == "direct":
+                pos = jnp.transpose(pos, (1, 0, 2))
+                # TODO, specify vmap axis instead of transposing
+                results = vmap(lambda x: msd_fn(x, cells, inv_cells))(pos)
+            else:
+                # TODO: vmap this stuff
+                results = []
+                for atom_index in range(pos.shape[1]):
+                    pos_i = pos[:, atom_index, :]
+                    msd_i = msd_fn(pos_i, cells, inv_cells)
+                    results.append(msd_i)
             for msd, Z in zip(results, Z_batch):
                 msds[Z].append(msd)
 
         results = self.compute_diffusion_coefficients(msds, timestep_fs)
         self.results = results
         self.plot_results(results)
+
