@@ -1,7 +1,9 @@
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import pint
 import znh5md
 import zntrack
+from ase.data import chemical_symbols
 from jax import jit, vmap
 from jax.numpy.fft import irfft, rfft
 
@@ -80,6 +82,61 @@ class EinsteinSelfDiffusion(zntrack.Node):
             print(f"Z={Z}: D = {D_avg:.4f} Å²/ps")
 
         self.results = results
+
+        # Plot MSD curves with fit window and fit line
+        n_species = len(results)
+        n_cols = 3
+        n_rows = (n_species + n_cols - 1) // n_cols
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
+        axes = axes.flatten() if n_rows > 1 else [axes]
+
+        for ax, (Z, data) in zip(axes, results.items()):
+            time_ps = data["time_ps"]
+            msd = data["msd"]
+
+            # Fit window
+            size = len(time_ps)
+            start = int(size * 0.2)
+            end = int(size * 0.8)
+
+            fit_time = time_ps[start:end]
+            fit_msd = msd[start:end]
+
+            # Linear fit (least squares)
+            A = jnp.vstack([fit_time, jnp.ones_like(fit_time)]).T
+            slope, intercept = jnp.linalg.lstsq(A, fit_msd, rcond=None)[0]
+            fit_line = slope * time_ps + intercept
+            D_fit = slope / 6  # since MSD = 6Dt
+
+            # Plot
+            ax.plot(time_ps, msd, label="MSD")
+            ax.plot(
+                time_ps,
+                fit_line,
+                "--",
+                label=f"Fit: D = {D_fit:.4f} Å²/ps",
+                color="tab:red",
+            )
+            ax.axvspan(
+                time_ps[start],
+                time_ps[end - 1],
+                color="gray",
+                alpha=0.2,
+                label="Fit Window",
+            )
+            ax.set_title(f"MSD for Z={Z} ({chemical_symbols[int(Z)]})")
+            ax.set_xlabel("Time [ps]")
+            ax.set_ylabel("MSD [Å²]")
+            ax.legend()
+            ax.grid(True)
+
+        # Hide unused axes
+        for ax in axes[n_species:]:
+            ax.axis("off")
+
+        plt.tight_layout()
+        plt.savefig("msd_species.png")
+        plt.show()
 
     def _extract_trajectory(self, io, batch_indices, selected_indices):
         pos = []
