@@ -82,7 +82,7 @@ class RadialDistributionFunction(zntrack.Node):
         io = znh5md.IO(self.file)
         size = len(io)
         batch_start_index = list(range(0, size, self.batch_size))
-        worker = Laufband(batch_start_index)
+        worker = Laufband(batch_start_index, cleanup=True)
 
         # Collect RDFs for each species pair over all batches
         rdfs_all = defaultdict(list)
@@ -96,6 +96,7 @@ class RadialDistributionFunction(zntrack.Node):
 
         # Plot the results
         plot_rdf(rdfs_all)
+        # TODO: use rdkit2ase to map substructures
 
     def compute_rdf(
         self, batch: list[ase.Atoms]
