@@ -79,7 +79,7 @@ class RadialDistributionFunction(zntrack.Node):
     batch_size: int = zntrack.params()  # You can set a default or make it configurable
 
     def run(self):
-        io = znh5md.IO(self.file)
+        io = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
         size = len(io)
         batch_start_index = list(range(0, size, self.batch_size))
         worker = Laufband(batch_start_index, cleanup=True)

@@ -4,13 +4,8 @@ import znh5md
 import zntrack
 from jax import jit, vmap
 from jax.numpy.fft import irfft, rfft
-from tqdm import tqdm
 
 ureg = pint.UnitRegistry()
-
-
-import jax.numpy as jnp
-from jax.numpy.fft import irfft, rfft
 
 
 def compute_msd_fft(x: jnp.ndarray) -> jnp.ndarray:
@@ -44,7 +39,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
     timestep: float = zntrack.params()
 
     def run(self):
-        io = znh5md.IO(self.file)
+        io = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
         size = len(io)
         batch_indices = range(0, size, 10)
         atomic_numbers = io[0].get_atomic_numbers()
@@ -89,12 +84,11 @@ class EinsteinSelfDiffusion(zntrack.Node):
     def _extract_trajectory(self, io, batch_indices, selected_indices):
         pos = []
         cells = []
-        for start in tqdm(batch_indices):
-            end = min(start + 10, len(io))
-            for atoms in io[start:end]:
-                selected = atoms[selected_indices]
-                pos.append(selected.positions)
-                cells.append(atoms.cell[:])
+        io.mask = selected_indices
+        frames = io[:]
+        for atoms in frames:
+            pos.append(atoms.positions)
+            cells.append(atoms.cell[:])
         return jnp.stack(pos), jnp.stack(cells)
 
     def _unwrap_positions(self, pos, cells):

@@ -1587,7 +1587,7 @@ requires-dist = [
     { name = "lazy-loader", specifier = ">=0.4" },
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "pint", specifier = ">=0.24.4" },
-    { name = "znh5md", specifier = ">=0.4.5" },
+    { name = "znh5md", editable = "../ZnH5MD" },
     { name = "zntrack", specifier = ">=0.8.7" },
 ]
 
@@ -3168,7 +3168,7 @@ wheels = [
 [[package]]
 name = "znh5md"
 version = "0.4.5"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../ZnH5MD" }
 dependencies = [
     { name = "ase" },
     { name = "h5py" },
@@ -3176,9 +3176,32 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/1b/9a4d26418ae9d10dfbf6460b02d996394dc5ae0f7d0af8e8a887ebbd446a/znh5md-0.4.5.tar.gz", hash = "sha256:aeb7ae5f25e2a52e1e265e0d761e1cd6224cb92d574984e62fccf0ef2fb1c03c", size = 171305, upload-time = "2025-05-23T09:14:03.725Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f2/ba/758a52a845ffb6c641a022d01b693ea8c66d6dda2797b36e8a95c3cba125/znh5md-0.4.5-py3-none-any.whl", hash = "sha256:6d30373c44cd731116d7c0e4e53dad1928ea710fa525bcdefbe98fb642a0735a", size = 22593, upload-time = "2025-05-23T09:14:02.042Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "ase", specifier = ">=3.24.0" },
+    { name = "h5py", specifier = ">=3.12.1" },
+    { name = "plams", specifier = ">=2025.102" },
+    { name = "tqdm", specifier = ">=4.67.1" },
+    { name = "typer", specifier = ">=0.15.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "chemfiles", specifier = ">=0.10.4" },
+    { name = "coverage", specifier = ">=7.6.10" },
+    { name = "mdanalysis", specifier = ">=2.8.0" },
+    { name = "mdtraj", specifier = ">=1.10.2" },
+    { name = "networkx", specifier = ">=3.4.2" },
+    { name = "numpy", specifier = "<2" },
+    { name = "pandas", specifier = ">=2.2.3" },
+    { name = "plams", specifier = ">=2025.102" },
+    { name = "pyh5md", specifier = ">=1.0.0" },
+    { name = "pytest", specifier = ">=8.3.4" },
+    { name = "pytest-benchmark", extras = ["histogram"], specifier = ">=5.1.0" },
+    { name = "pytest-cov", specifier = ">=6.1.1" },
+    { name = "rdkit2ase", specifier = ">=0.1.4" },
+    { name = "ruff", specifier = ">=0.11.8" },
 ]
 
 [[package]]
