@@ -63,6 +63,37 @@ def autocorrelation_1d_jax(data, N, n_fft):
 
 autocorrelation_1d_jax_jit = jit(autocorrelation_1d_jax, static_argnames=("N", "n_fft"))
 
+
+def fn1(rsq, SAB, SUMSQ, N):
+    MSD_0 = SUMSQ - 2 * SAB[0] * N
+
+    cs1 = jnp.cumsum(rsq)[:-1]
+    
+    rsq_tail_reversed = rsq[1:][::-1]
+    cs2 = jnp.cumsum(rsq_tail_reversed)
+
+    denom = N - 1 - jnp.arange(N - 1)
+    MSD_rest = (SUMSQ - cs1 - cs2) / denom
+    MSD_rest -= 2 * SAB[1:]
+
+    MSD = jnp.concatenate([jnp.array([MSD_0]), MSD_rest])
+    return MSD
+
+def _compute_msd_fft(pos: np.ndarray, n_fft: int, N: int) -> jnp.ndarray:
+    rsq = jnp.sum(pos**2, axis=1)
+
+    SAB = autocorrelation_1d_jax_jit(pos[:,0], N, n_fft)
+    for i in range(1, pos.shape[1]):
+        SAB += autocorrelation_1d_jax_jit(pos[:,i], N, n_fft)
+
+    SUMSQ = 2*np.sum(rsq)
+
+    MSD = fn1(rsq, SAB, SUMSQ, N)
+
+    return MSD
+
+_compute_msd_fft_jit = jit(_compute_msd_fft, static_argnames=("n_fft", "N"))
+
 def compute_msd_fft(positions: np.ndarray) -> np.ndarray:
     pos = np.asarray(positions)
     N = len(pos)
@@ -71,25 +102,8 @@ def compute_msd_fft(positions: np.ndarray) -> np.ndarray:
         return np.array([], dtype=pos.dtype)
     if pos.ndim==1:
         pos = pos.reshape((-1,1))
-    N = len(pos)
-    rsq = np.sum(pos**2, axis=1)
-    MSD = np.zeros(N, dtype=float)
 
-    SAB = autocorrelation_1d_jax_jit(pos[:,0], N, n_fft)
-    for i in range(1, pos.shape[1]):
-        SAB += autocorrelation_1d_jax_jit(pos[:,i], N, n_fft)
-
-    SUMSQ = 2*np.sum(rsq)
-
-    m = 0
-    MSD[m] = SUMSQ - 2*SAB[m]*N
-
-    MSD[1:] = (SUMSQ - np.cumsum(rsq)[:-1] - np.cumsum(rsq[1:][::-1])) / (N-1-np.arange(N-1))
-    MSD[1:] -= 2*SAB[1:]
-
-    return MSD
-
-# compute_msd_fft(positions[:, 0], dt_val) # positions is (N, 3)
+    return _compute_msd_fft_jit(pos.reshape((N, -1)), n_fft=n_fft, N=N)
 
 class EinsteinSelfDiffusion(zntrack.Node):
     """Compute self-diffusion coefficients using Einstein relation from MD trajectories."""
