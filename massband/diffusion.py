@@ -9,7 +9,6 @@ import znh5md
 import zntrack
 from ase.data import chemical_symbols
 from jax import jit, vmap
-import jax.lax as jlax
 import numpy as np
 from tqdm import tqdm
 from massband.utils import unwrap_positions
@@ -19,11 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 @jit
-def compute_msd_direct(
-    x: jnp.ndarray
-) -> jnp.ndarray:
+def compute_msd_direct(x: jnp.ndarray) -> jnp.ndarray:
     """Compute the Mean Squared Displacement (MSD) using direct method.
-    
+
     Parameters
     ----------
     x : jnp.ndarray
@@ -51,15 +48,16 @@ def compute_msd_direct(
     return msd
 
 
-def autocorrelation_1d_jax(data, N, n_fft):    
+def autocorrelation_1d_jax(data, N, n_fft):
     # Pad the signal with zeros
     padded_data = jnp.zeros(2 * n_fft).at[:N].set(data)
-    
+
     # FFT → multiply by conjugate → IFFT → normalize
     fft_data = jnp.fft.fft(padded_data)
     autocorr = jnp.fft.ifft(fft_data * jnp.conj(fft_data))[:N].real
     norm = N - jnp.arange(N)  # Normalization factor
     return autocorr / norm
+
 
 autocorrelation_1d_jax_jit = jit(autocorrelation_1d_jax, static_argnames=("N", "n_fft"))
 
@@ -79,14 +77,15 @@ def fn1(rsq, SAB, SUMSQ, N):
     MSD = jnp.concatenate([jnp.array([MSD_0]), MSD_rest])
     return MSD
 
+
 def _compute_msd_fft(pos: np.ndarray, n_fft: int, N: int) -> jnp.ndarray:
     rsq = jnp.sum(pos**2, axis=1)
 
-    SAB = autocorrelation_1d_jax(pos[:,0], N, n_fft)
+    SAB = autocorrelation_1d_jax(pos[:, 0], N, n_fft)
     for i in range(1, pos.shape[1]):
-        SAB += autocorrelation_1d_jax(pos[:,i], N, n_fft)
+        SAB += autocorrelation_1d_jax(pos[:, i], N, n_fft)
 
-    SUMSQ = 2*np.sum(rsq)
+    SUMSQ = 2 * np.sum(rsq)
 
     MSD = fn1(rsq, SAB, SUMSQ, N)
 
@@ -99,12 +98,13 @@ def compute_msd_fft(positions: np.ndarray) -> np.ndarray:
     n_fft = 2 ** (jnp.ceil(jnp.log2(N))).astype(int).item()
     if pos.shape[0] == 0:
         return np.array([], dtype=pos.dtype)
-    if pos.ndim==1:
-        pos = pos.reshape((-1,1))
-    
+    if pos.ndim == 1:
+        pos = pos.reshape((-1, 1))
+
     _compute_msd_fft_jit = jit(_compute_msd_fft, static_argnames=("n_fft", "N"))
 
     return _compute_msd_fft_jit(pos.reshape((N, -1)), n_fft=n_fft, N=N)
+
 
 class EinsteinSelfDiffusion(zntrack.Node):
     """Compute self-diffusion coefficients using Einstein relation from MD trajectories."""
@@ -213,8 +213,20 @@ class EinsteinSelfDiffusion(zntrack.Node):
             start_idx, end_idx = data["fit_window"]
 
             ax.plot(time_ps, msd, label="MSD")
-            ax.plot(time_ps, fit_line, "--", label=f"Fit: D = {data['diffusion_coefficient']:.4f} Å²/ps", color="tab:red")
-            ax.axvspan(time_ps[start_idx], time_ps[end_idx - 1], color="gray", alpha=0.2, label="Fit Window")
+            ax.plot(
+                time_ps,
+                fit_line,
+                "--",
+                label=f"Fit: D = {data['diffusion_coefficient']:.4f} Å²/ps",
+                color="tab:red",
+            )
+            ax.axvspan(
+                time_ps[start_idx],
+                time_ps[end_idx - 1],
+                color="gray",
+                alpha=0.2,
+                label="Fit Window",
+            )
 
             ax.set_title(f"{data['symbol']} (Z={Z})")
             ax.set_xlabel("Time (ps)")
@@ -241,16 +253,19 @@ class EinsteinSelfDiffusion(zntrack.Node):
         logger.info(f"Starting MSD calculation for {n_atoms} atoms")
 
         if self.method == "direct":
+
             @jit
             def msd_fn(x, cell, inv_cell):
                 x_unwrapped = unwrap_positions(x, cell, inv_cell)
                 return compute_msd_direct(x_unwrapped)
+
             logger.info("Using direct MSD computation method")
         elif self.method == "fft":
 
             def msd_fn(x, cell, inv_cell):
                 x_unwrapped = unwrap_positions(x, cell, inv_cell)
                 return compute_msd_fft(x_unwrapped)
+
             logger.info("Using FFT-based MSD computation method")
         else:
             raise ValueError(f"Unknown method: {self.method}. Use 'direct' or 'fft'.")
@@ -279,4 +294,3 @@ class EinsteinSelfDiffusion(zntrack.Node):
         results = self.compute_diffusion_coefficients(msds, timestep_fs)
         self.results = results
         self.plot_results(results)
-

@@ -11,6 +11,7 @@ from pathlib import Path
 
 ureg = pint.UnitRegistry()
 
+
 @pytest.fixture
 def diffusive_positions() -> np.ndarray:
     # Parameters
@@ -38,10 +39,8 @@ def diffusive_positions() -> np.ndarray:
         )
         pos += displacement
         frames.append(pos.copy())
-    
+
     return np.array(frames, dtype=np.float32), dt_val
-
-
 
 
 @pytest.fixture
