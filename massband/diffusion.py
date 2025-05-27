@@ -6,6 +6,7 @@ import zntrack
 from ase.data import chemical_symbols
 from jax import jit, vmap
 from jax.numpy.fft import irfft, rfft
+import jax.lax 
 
 ureg = pint.UnitRegistry()
 
@@ -60,7 +61,10 @@ class EinsteinSelfDiffusion(zntrack.Node):
             unwrapped = self._unwrap_positions(pos, cells)  # shape (N, M, 3)
 
             # Map over particles: shape (M, N) → then mean over axis 0
-            per_particle_msd = vmap(jit_compute_msd_fft, in_axes=1)(unwrapped)
+            # per_particle_msd = vmap(jit_compute_msd_fft, in_axes=1)(unwrapped)
+            per_particle_msd = jax.lax.map(
+                jit_compute_msd_fft, unwrapped.transpose(1, 0, 2)
+            )
             msd = jnp.mean(per_particle_msd, axis=0)  # shape (N,)
 
             timestep = self.timestep * ureg.fs * self.sampling_rate
