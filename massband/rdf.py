@@ -77,6 +77,7 @@ class RadialDistributionFunction(zntrack.Node):
 
     file: str = zntrack.deps_path()
     batch_size: int = zntrack.params()  # You can set a default or make it configurable
+    bin_width: float = zntrack.params(0.05)  # Width of the bins for RDF
 
     def run(self):
         io = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
@@ -120,8 +121,7 @@ class RadialDistributionFunction(zntrack.Node):
 
         # Define bins
         r_max = 10.0
-        bin_width = 0.1
-        bin_edges = jnp.arange(0, r_max + bin_width, bin_width)
+        bin_edges = jnp.arange(0, r_max + self.bin_width, self.bin_width)
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
         shell_volumes = (4 / 3) * jnp.pi * (bin_edges[1:] ** 3 - bin_edges[:-1] ** 3)
 
