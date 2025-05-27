@@ -10,6 +10,7 @@ import zntrack
 from ase.data import chemical_symbols
 from jax import jit, vmap
 import jax.lax as jlax
+import numpy as np
 from tqdm import tqdm
 from massband.utils import unwrap_positions
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @jit
 def compute_msd_direct(
-    x: jnp.ndarray, cell: jnp.ndarray, inv_cell: jnp.ndarray
+    x: jnp.ndarray
 ) -> jnp.ndarray:
     """Compute the Mean Squared Displacement (MSD) using direct method.
     
@@ -27,21 +28,16 @@ def compute_msd_direct(
     ----------
     x : jnp.ndarray
         Positions of a single atom in cartesian coordinates, shape (n_frames, 3).
-    cell : jnp.ndarray
-        Cell vectors for each frame, shape (n_frames, 3, 3).
-    inv_cell : jnp.ndarray
-        Inverse cell vectors for each frame, shape (n_frames, 3, 3).
-
     Returns
     -------
     jnp.ndarray
         Mean Squared Displacement for each time step, shape (n_frames,).
     """
-    x_unwrapped = unwrap_positions(x, cell, inv_cell)
-    N = x_unwrapped.shape[0]
+
+    N = x.shape[0]
 
     def msd_at_dt(dt):
-        displacements = x_unwrapped[dt:] - x_unwrapped[:-dt]
+        displacements = x[dt:] - x[:-dt]
         squared_displacements = jnp.sum(displacements**2, axis=1)
         return jnp.mean(squared_displacements)
 
@@ -54,6 +50,46 @@ def compute_msd_direct(
 
     return msd
 
+
+def autocorrelation_1d_jax(data, N, n_fft):    
+    # Pad the signal with zeros
+    padded_data = jnp.zeros(2 * n_fft).at[:N].set(data)
+    
+    # FFT → multiply by conjugate → IFFT → normalize
+    fft_data = jnp.fft.fft(padded_data)
+    autocorr = jnp.fft.ifft(fft_data * jnp.conj(fft_data))[:N].real
+    norm = N - jnp.arange(N)  # Normalization factor
+    return autocorr / norm
+
+autocorrelation_1d_jax_jit = jit(autocorrelation_1d_jax, static_argnames=("N", "n_fft"))
+
+def compute_msd_fft(positions: np.ndarray) -> np.ndarray:
+    pos = np.asarray(positions)
+    N = len(pos)
+    n_fft = 2 ** (jnp.ceil(jnp.log2(N))).astype(int).item()
+    if pos.shape[0] == 0:
+        return np.array([], dtype=pos.dtype)
+    if pos.ndim==1:
+        pos = pos.reshape((-1,1))
+    N = len(pos)
+    rsq = np.sum(pos**2, axis=1)
+    MSD = np.zeros(N, dtype=float)
+
+    SAB = autocorrelation_1d_jax_jit(pos[:,0], N, n_fft)
+    for i in range(1, pos.shape[1]):
+        SAB += autocorrelation_1d_jax_jit(pos[:,i], N, n_fft)
+
+    SUMSQ = 2*np.sum(rsq)
+
+    m = 0
+    MSD[m] = SUMSQ - 2*SAB[m]*N
+
+    MSD[1:] = (SUMSQ - np.cumsum(rsq)[:-1] - np.cumsum(rsq[1:][::-1])) / (N-1-np.arange(N-1))
+    MSD[1:] -= 2*SAB[1:]
+
+    return MSD
+
+# compute_msd_fft(positions[:, 0], dt_val) # positions is (N, 3)
 
 class EinsteinSelfDiffusion(zntrack.Node):
     """Compute self-diffusion coefficients using Einstein relation from MD trajectories."""
@@ -94,35 +130,47 @@ class EinsteinSelfDiffusion(zntrack.Node):
         """Calculate diffusion coefficients from MSD data.
 
         Args:
-            msds: Dictionary mapping atomic numbers to MSD arrays
-            timestep_fs: MD timestep in femtoseconds
+            msds: Dictionary mapping atomic numbers to lists of MSD arrays.
+            timestep_fs: MD timestep in femtoseconds.
 
         Returns:
-            Dictionary containing diffusion coefficients and related data
+            Dictionary containing full data for plotting and analysis.
         """
         results = {}
         timestep_ps = timestep_fs / 1000  # fs -> ps
 
         for Z, msd_array in msds.items():
-            # TODO: self.fit_window is not used here
-            # TODO: save fit parameters for plotting later
             msd_avg = jnp.mean(jnp.stack(msd_array), axis=0)
             time_ps = jnp.arange(msd_avg.shape[0]) * timestep_ps
-            D = jnp.where(time_ps > 0, msd_avg / (6 * time_ps), 0)
 
             # Fit to linear region
             start_idx = int(len(time_ps) * self.fit_window[0])
             end_idx = int(len(time_ps) * self.fit_window[1])
-            D_avg = jnp.mean(D[start_idx:end_idx])
+
+            fit_time = time_ps[start_idx:end_idx]
+            fit_msd = msd_avg[start_idx:end_idx]
+
+            # Linear least squares fit
+            A = jnp.vstack([fit_time, jnp.ones_like(fit_time)]).T
+            slope, intercept = jnp.linalg.lstsq(A, fit_msd, rcond=None)[0]
+            D_fit = slope / 6
+            fit_line = slope * time_ps + intercept
 
             results[Z] = {
-                "diffusion_coefficient": D_avg,
-                "msd": msd_avg,
+                "Z": Z,
+                "symbol": chemical_symbols[Z],
+                "diffusion_coefficient": D_fit,
                 "time_ps": time_ps,
+                "msd": msd_avg,
+                "fit_line": fit_line,
                 "fit_window": (start_idx, end_idx),
+                "fit_msd": fit_msd,
+                "fit_time": fit_time,
+                "slope": slope,
+                "intercept": intercept,
             }
 
-            logger.info(f"Z={Z} ({chemical_symbols[Z]}): D = {D_avg:.4f} Å²/ps")
+            logger.info(f"Z={Z} ({chemical_symbols[Z]}): D = {D_fit:.4f} Å²/ps")
 
         return results
 
@@ -130,7 +178,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
         """Plot MSD curves and diffusion coefficient fits.
 
         Args:
-            results: Dictionary of results from compute_diffusion_coefficients
+            results: Dictionary containing precomputed MSD and fit data
             filename: Output filename for the plot
         """
         n_species = len(results)
@@ -144,36 +192,16 @@ class EinsteinSelfDiffusion(zntrack.Node):
             axes = axes.flatten()
 
         for ax, (Z, data) in zip(axes, results.items()):
-            time_ps, msd = data["time_ps"], data["msd"]
+            time_ps = data["time_ps"]
+            msd = data["msd"]
+            fit_line = data["fit_line"]
             start_idx, end_idx = data["fit_window"]
 
-            # Linear fit
-            fit_time = time_ps[start_idx:end_idx]
-            fit_msd = msd[start_idx:end_idx]
-
-            A = jnp.vstack([fit_time, jnp.ones_like(fit_time)]).T
-            slope, intercept = jnp.linalg.lstsq(A, fit_msd, rcond=None)[0]
-            fit_line = slope * time_ps + intercept
-            D_fit = slope / 6
-
-            # Plotting
             ax.plot(time_ps, msd, label="MSD")
-            ax.plot(
-                time_ps,
-                fit_line,
-                "--",
-                label=f"Fit: D = {D_fit:.4f} Å²/ps",
-                color="tab:red",
-            )
-            ax.axvspan(
-                time_ps[start_idx],
-                time_ps[end_idx - 1],
-                color="gray",
-                alpha=0.2,
-                label="Fit Window",
-            )
+            ax.plot(time_ps, fit_line, "--", label=f"Fit: D = {data['diffusion_coefficient']:.4f} Å²/ps", color="tab:red")
+            ax.axvspan(time_ps[start_idx], time_ps[end_idx - 1], color="gray", alpha=0.2, label="Fit Window")
 
-            ax.set_title(f"{chemical_symbols[Z]} (Z={Z})")
+            ax.set_title(f"{data['symbol']} (Z={Z})")
             ax.set_xlabel("Time (ps)")
             ax.set_ylabel("MSD (Å²)")
             ax.legend()
@@ -197,6 +225,11 @@ class EinsteinSelfDiffusion(zntrack.Node):
         n_atoms = len(atomic_numbers)
         logger.info(f"Starting MSD calculation for {n_atoms} atoms")
 
+        @jit
+        def msd_fn(x, cell, inv_cell):
+            x_unwrapped = unwrap_positions(x, cell, inv_cell)
+            return compute_msd_direct(x_unwrapped)
+
         # Process atoms in batches
         for start in tqdm(range(0, n_atoms, self.batch_size), desc="Processing atoms"):
             end = min(start + self.batch_size, n_atoms)
@@ -205,7 +238,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
 
             pos = self.get_positions(atom_slice)  # shape: (n_frames, batch_size, 3)
             pos = jnp.transpose(pos, (1, 0, 2))
-            results = vmap(lambda x: compute_msd_direct(x, cells, inv_cells))(pos)
+            results = vmap(lambda x: msd_fn(x, cells, inv_cells))(pos)
             for msd, Z in zip(results, Z_batch):
                 msds[Z].append(msd)
 

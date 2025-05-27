@@ -23,6 +23,7 @@ build-backend = "hatchling.build"
 dev = [
     "ipykernel>=6.29.5",
     "pytest>=8.3.5",
+    "tidynamics>=1.1.2",
     "zndraw>=0.5.10",
 ]
 
