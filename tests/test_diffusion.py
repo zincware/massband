@@ -3,7 +3,7 @@ import numpy as np
 import pint
 from ase import Atoms
 import massband
-from massband.diffusion import compute_msd_direct, compute_msd_fft
+from massband.diffusion.utils import compute_msd_direct, compute_msd_fft
 import numpy.testing as npt
 import tidynamics
 import znh5md

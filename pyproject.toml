@@ -10,6 +10,7 @@ dependencies = [
     "lazy-loader>=0.4",
     "matplotlib>=3.10.3",
     "pint>=0.23",
+    "rdkit2ase>=0.1.7",
     "znh5md>=0.4.6",
     "zntrack>=0.8.7",
 ]
@@ -26,4 +27,7 @@ dev = [
     "tidynamics>=1.1.2",
     "zndraw>=0.5.10",
 ]
+
+[tool.uv.sources]
+rdkit2ase = { path = "../rdkit2ase", editable = true }
 

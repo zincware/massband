@@ -9,102 +9,13 @@ import znh5md
 import zntrack
 from ase.data import chemical_symbols
 from jax import jit, vmap
-import numpy as np
 from tqdm import tqdm
 from massband.utils import unwrap_positions
+import rdkit2ase
+from massband.diffusion.utils import compute_msd_direct, compute_msd_fft
 
 ureg = pint.UnitRegistry()
 logger = logging.getLogger(__name__)
-
-
-@jit
-def compute_msd_direct(x: jnp.ndarray) -> jnp.ndarray:
-    """Compute the Mean Squared Displacement (MSD) using direct method.
-
-    Parameters
-    ----------
-    x : jnp.ndarray
-        Positions of a single atom in cartesian coordinates, shape (n_frames, 3).
-    Returns
-    -------
-    jnp.ndarray
-        Mean Squared Displacement for each time step, shape (n_frames,).
-    """
-
-    N = x.shape[0]
-
-    def msd_at_dt(dt):
-        displacements = x[dt:] - x[:-dt]
-        squared_displacements = jnp.sum(displacements**2, axis=1)
-        return jnp.mean(squared_displacements)
-
-    msd = jnp.zeros(N)
-
-    # Avoid looping over dt=0 because displacement is zero
-    msd = msd.at[0].set(0.0)
-    msd_values = jnp.array([msd_at_dt(dt) for dt in range(1, N)])
-    msd = msd.at[1:].set(msd_values)
-
-    return msd
-
-
-def autocorrelation_1d_jax(data, N, n_fft):
-    # Pad the signal with zeros
-    padded_data = jnp.zeros(2 * n_fft).at[:N].set(data)
-
-    # FFT → multiply by conjugate → IFFT → normalize
-    fft_data = jnp.fft.fft(padded_data)
-    autocorr = jnp.fft.ifft(fft_data * jnp.conj(fft_data))[:N].real
-    norm = N - jnp.arange(N)  # Normalization factor
-    return autocorr / norm
-
-
-autocorrelation_1d_jax_jit = jit(autocorrelation_1d_jax, static_argnames=("N", "n_fft"))
-
-
-def fn1(rsq, SAB, SUMSQ, N):
-    MSD_0 = SUMSQ - 2 * SAB[0] * N
-
-    cs1 = jnp.cumsum(rsq)[:-1]
-
-    rsq_tail_reversed = rsq[1:][::-1]
-    cs2 = jnp.cumsum(rsq_tail_reversed)
-
-    denom = N - 1 - jnp.arange(N - 1)
-    MSD_rest = (SUMSQ - cs1 - cs2) / denom
-    MSD_rest -= 2 * SAB[1:]
-
-    MSD = jnp.concatenate([jnp.array([MSD_0]), MSD_rest])
-    return MSD
-
-
-def _compute_msd_fft(pos: np.ndarray, n_fft: int, N: int) -> jnp.ndarray:
-    rsq = jnp.sum(pos**2, axis=1)
-
-    SAB = autocorrelation_1d_jax(pos[:, 0], N, n_fft)
-    for i in range(1, pos.shape[1]):
-        SAB += autocorrelation_1d_jax(pos[:, i], N, n_fft)
-
-    SUMSQ = 2 * np.sum(rsq)
-
-    MSD = fn1(rsq, SAB, SUMSQ, N)
-
-    return MSD
-
-
-def compute_msd_fft(positions: np.ndarray) -> np.ndarray:
-    pos = np.asarray(positions)
-    N = len(pos)
-    n_fft = 2 ** (jnp.ceil(jnp.log2(N))).astype(int).item()
-    if pos.shape[0] == 0:
-        return np.array([], dtype=pos.dtype)
-    if pos.ndim == 1:
-        pos = pos.reshape((-1, 1))
-
-    _compute_msd_fft_jit = jit(_compute_msd_fft, static_argnames=("n_fft", "N"))
-
-    return _compute_msd_fft_jit(pos.reshape((N, -1)), n_fft=n_fft, N=N)
-
 
 class EinsteinSelfDiffusion(zntrack.Node):
     """Compute self-diffusion coefficients using Einstein relation from MD trajectories."""
@@ -115,6 +26,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
     batch_size: int = zntrack.params(64)
     fit_window: Tuple[float, float] = zntrack.params((0.2, 0.8))
     method: Literal["direct", "fft"] = zntrack.params("fft")
+    structures: list[str]|None = zntrack.params(None)
 
     def get_cells(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
         io = znh5md.IO(
@@ -131,6 +43,8 @@ class EinsteinSelfDiffusion(zntrack.Node):
 
     def get_positions(self, index: slice) -> jnp.ndarray:
         """Load unwrapped positions for a slice of atom indices."""
+        # TODO: for COM diffusion, we should process this here ?
+
         logger.info(f"Loading positions for index {index}")
         io = znh5md.IO(
             self.file, variable_shape=False, include=["position"], mask=index
@@ -245,6 +159,27 @@ class EinsteinSelfDiffusion(zntrack.Node):
     def run(self):
         """Main computation workflow."""
         cells, inv_cells = self.get_cells()
+
+        if self.structures is not None:
+            io = znh5md.IO(self.file, variable_shape=False)
+            atoms = io[0]
+            molecules = defaultdict(list)
+            for structure in self.structures:
+                indices = rdkit2ase.match_substructure(
+                    atoms, structure
+                )
+                if len(indices) > 0:
+                    molecules[structure].extend(indices)
+
+            print(f"Found {molecules} structures in the trajectory.")
+            # TODO: in this case, we don't want to compute the of each atom, but rather the center of mass of the molecule, given by the indices
+            # - get the mass of each atom in the molecule from the initial structure using ase
+            # - assume the indices are the same for all frames, iterate the dataset in the given batch size, for all indices not in the molecule, compute the MSD as usual
+            # for all the others, store the positions in a dict[index] = positions, and as soon as we have all the positions for any molecule, compute the MSD for that molecule
+            # using the COM and then remove the indices / positions from the dataset
+
+
+
         atomic_numbers = self.get_atomic_numbers()
         timestep_fs = (self.timestep * ureg.fs * self.sampling_rate).magnitude
         msds = defaultdict(list)
