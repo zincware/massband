@@ -1589,7 +1589,7 @@ requires-dist = [
     { name = "lazy-loader", specifier = ">=0.4" },
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "pint", specifier = ">=0.23" },
-    { name = "znh5md", git = "https://github.com/zincware/znh5md" },
+    { name = "znh5md", specifier = ">=0.4.6" },
     { name = "zntrack", specifier = ">=0.8.7" },
 ]
 
@@ -3195,12 +3195,16 @@ wheels = [
 [[package]]
 name = "znh5md"
 version = "0.4.6"
-source = { git = "https://github.com/zincware/znh5md#111f0f297056e5f9f08735802a7b2c9dbced8c0c" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ase" },
     { name = "h5py" },
     { name = "tqdm" },
     { name = "typer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/0b/d57f54d7abb94002f29e636578890dd02793a3ec4a56b369c9551d1d9a66/znh5md-0.4.6.tar.gz", hash = "sha256:40d6908ee5c8fe0177e86ddc15eda5daa0795576042c96e5cff193bd4a0cdf24", size = 172235, upload-time = "2025-05-28T05:55:09.53Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/50/134ab1e3b71ac78e40b94fe4b969ca75991f2c3e04dbe9e53e621794d049/znh5md-0.4.6-py3-none-any.whl", hash = "sha256:6107925aad479ffa8d6da4f769f7a0b07d21a60d0c3784f64a63a8d3eb322dad", size = 22984, upload-time = "2025-05-28T05:55:08.178Z" },
 ]
 
 [[package]]

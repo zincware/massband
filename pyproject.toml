@@ -27,5 +27,3 @@ dev = [
     "zndraw>=0.5.10",
 ]
 
-[tool.uv.sources]
-znh5md = { git = "https://github.com/zincware/znh5md" }
