@@ -27,6 +27,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
     fit_window: Tuple[float, float] = zntrack.params((0.2, 0.8))
     method: Literal["direct", "fft"] = zntrack.params("fft")
     structures: list[str]|None = zntrack.params(None)
+    # TODO: allow not smiles but just the sum formula, e.g. "C6H12O6" for glucose
 
     def get_cells(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
         io = znh5md.IO(
@@ -119,6 +120,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
         for mol_indices in used_mol_keys:
             for idx in mol_indices:
                 cache.pop(idx, None)
+        print(f"Used {len(used_mol_keys)} molecular indices, remaining cache size: {len(cache)}")
 
         self.data_cache = cache
 
@@ -249,7 +251,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
                 if len(indices) > 0:
                     substructures[structure].extend(indices)
 
-            print(f"Found {substructures = } in the first frame.")
+                print(f"Found {len(indices)} matches for substructure {structure} in the dataset.")
             # TODO: in this case, we don't want to compute the of each atom, but rather the center of mass of the molecule, given by the indices
             # - get the mass of each atom in the molecule from the initial structure using ase
             # - assume the indices are the same for all frames, iterate the dataset in the given batch size, for all indices not in the molecule, compute the MSD as usual
@@ -271,15 +273,15 @@ class EinsteinSelfDiffusion(zntrack.Node):
 
             @jit
             def msd_fn(x, cell, inv_cell):
-                x_unwrapped = unwrap_positions(x, cell, inv_cell)
-                return compute_msd_direct(x_unwrapped)
+                # x_unwrapped = unwrap_positions(x, cell, inv_cell)
+                return compute_msd_direct(x)
 
             logger.info("Using direct MSD computation method")
         elif self.method == "fft":
 
             def msd_fn(x, cell, inv_cell):
-                x_unwrapped = unwrap_positions(x, cell, inv_cell)
-                return compute_msd_fft(x_unwrapped)
+                # x_unwrapped = unwrap_positions(x, cell, inv_cell)
+                return compute_msd_fft(x)
 
             logger.info("Using FFT-based MSD computation method")
         else:
@@ -290,9 +292,17 @@ class EinsteinSelfDiffusion(zntrack.Node):
             end = min(start + self.batch_size, n_atoms)
             atom_slice = slice(start, end)
             Z_batch = atomic_numbers[start:end]
-
+            
             pos = self.get_positions(atom_slice)  # shape: (n_frames, batch_size, 3)
             # postprocess positions for substructures
+            # TODO: need to unwrap here!!
+            # pos = unwrap_positions(pos, cells, inv_cells)
+            # TODO: fix unnecessary multiple transposes
+            pos = jnp.transpose(pos, (1, 0, 2))
+            pos = vmap(
+                lambda x: unwrap_positions(x, cells, inv_cells)
+            )(pos)
+            pos = jnp.transpose(pos, (1, 0, 2))
             Z_batch, pos = self.postprocess_positions(
                 pos, masses, atomic_numbers, substructures, atom_slice
             )
