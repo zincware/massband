@@ -13,9 +13,13 @@ from tqdm import tqdm
 from massband.utils import unwrap_positions
 import rdkit2ase
 from massband.diffusion.utils import compute_msd_direct, compute_msd_fft
+import jax
+
+# Enable 64-bit precision in JAX for FFT accuracy
+jax.config.update("jax_enable_x64", True)
 
 ureg = pint.UnitRegistry()
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 class EinsteinSelfDiffusion(zntrack.Node):
     """Compute self-diffusion coefficients using Einstein relation from MD trajectories."""
@@ -33,7 +37,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
         io = znh5md.IO(
             self.file, variable_shape=False, include=["position", "box"], mask=[]
         )
-        cells = jnp.stack([atoms.cell[:] for atoms in io])
+        cells = jnp.stack([atoms.cell[:] for atoms in io[:]])
         inv_cells = jnp.linalg.inv(cells)
         return cells, inv_cells
 
@@ -51,12 +55,12 @@ class EinsteinSelfDiffusion(zntrack.Node):
         """Load unwrapped positions for a slice of atom indices."""
         # TODO: for COM diffusion, we should process this here ?
 
-        logger.info(f"Loading positions for index {index}")
+        log.info(f"Loading positions for index {index}")
         io = znh5md.IO(
             self.file, variable_shape=False, include=["position"], mask=index
         )
-        pos = jnp.stack([atoms.positions for atoms in io])
-        logger.info(f"Loaded positions shape: {pos.shape}")
+        pos = jnp.stack([atoms.positions for atoms in io[:]])
+        log.info(f"Loaded positions shape: {pos.shape}")
         return pos  # shape: (n_frames, n_atoms_in_batch, 3)
 
     def postprocess_positions(self, pos: jnp.ndarray, masses, atomic_numbers, substructures, atom_slice: slice, max_cache_size: int = 10000):
@@ -178,7 +182,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
                 "intercept": intercept,
             }
 
-            logger.info(f"Z={Z} ({symbol}): D = {D_fit:.4f} Å²/ps")
+            log.info(f"Z={Z} ({symbol}): D = {D_fit:.4f} Å²/ps")
 
         return results
 
@@ -237,6 +241,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
 
     def run(self):
         """Main computation workflow."""
+        log.info("Collecting cell vectors and inverse cell vectors")
         cells, inv_cells = self.get_cells()
         
         substructures = defaultdict(list)
@@ -244,14 +249,15 @@ class EinsteinSelfDiffusion(zntrack.Node):
         if self.structures is not None:
             io = znh5md.IO(self.file, variable_shape=False)
             atoms = io[0]
+            log.info(f"Searching for substructures in {len(self.structures)} patterns")
             for structure in self.structures:
                 indices = rdkit2ase.match_substructure(
-                    atoms, structure
+                    atoms, smiles=structure, suggestions=self.structures,
                 )
                 if len(indices) > 0:
                     substructures[structure].extend(indices)
 
-                print(f"Found {len(indices)} matches for substructure {structure} in the dataset.")
+                log.info(f"Found {len(indices)} matches for substructure {structure} in the dataset.")
             # TODO: in this case, we don't want to compute the of each atom, but rather the center of mass of the molecule, given by the indices
             # - get the mass of each atom in the molecule from the initial structure using ase
             # - assume the indices are the same for all frames, iterate the dataset in the given batch size, for all indices not in the molecule, compute the MSD as usual
@@ -259,7 +265,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
             # using the COM and then remove the indices / positions from the dataset
             # have a max size of the data cache and raise an error, also allow direct indexing as an alternative.
 
-
+        log.info("Collecting atomic masses and numbers")
         masses = self.get_masses()
         atomic_numbers = self.get_atomic_numbers()
         # use iddentifier and not aotmic numbers so one can also use com
@@ -267,7 +273,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
         msds = defaultdict(list)
 
         n_atoms = len(atomic_numbers)
-        logger.info(f"Starting MSD calculation for {n_atoms} atoms")
+        log.info(f"Starting MSD calculation for {n_atoms} atoms")
 
         if self.method == "direct":
 
@@ -276,14 +282,14 @@ class EinsteinSelfDiffusion(zntrack.Node):
                 # x_unwrapped = unwrap_positions(x, cell, inv_cell)
                 return compute_msd_direct(x)
 
-            logger.info("Using direct MSD computation method")
+            log.info("Using direct MSD computation method")
         elif self.method == "fft":
 
             def msd_fn(x, cell, inv_cell):
                 # x_unwrapped = unwrap_positions(x, cell, inv_cell)
                 return compute_msd_fft(x)
 
-            logger.info("Using FFT-based MSD computation method")
+            log.info("Using FFT-based MSD computation method")
         else:
             raise ValueError(f"Unknown method: {self.method}. Use 'direct' or 'fft'.")
 
