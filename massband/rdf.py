@@ -50,7 +50,7 @@ def plot_rdf(rdfs: defaultdict):
     n_cols = 3
     n_rows = (n_rdfs + n_cols - 1) // n_cols  # Ceiling division
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
-    axes = axes.flatten() if n_rows > 1 else [axes]  # Flatten if multiple rows
+    axes = axes.flatten()
 
     for ax, ((a, b), g_r_list) in zip(axes, rdfs.items()):
         g_r_array = jnp.stack(g_r_list)
