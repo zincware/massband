@@ -1638,7 +1638,7 @@ requires-dist = [
     { name = "lazy-loader", specifier = ">=0.4" },
     { name = "matplotlib", specifier = ">=3.10.3" },
     { name = "pint", specifier = ">=0.23" },
-    { name = "rdkit2ase", editable = "../rdkit2ase" },
+    { name = "rdkit2ase", specifier = ">=0.1.8" },
     { name = "znh5md", specifier = ">=0.4.6" },
     { name = "zntrack", specifier = ">=0.8.7" },
 ]
@@ -2649,27 +2649,15 @@ wheels = [
 [[package]]
 name = "rdkit2ase"
 version = "0.1.8"
-source = { editable = "../rdkit2ase" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ase" },
     { name = "networkx" },
     { name = "rdkit" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "ase", specifier = ">=3.25.0" },
-    { name = "networkx", specifier = ">=3.4.2" },
-    { name = "rdkit", specifier = ">=2024" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "ipykernel", specifier = ">=6.29.5" },
-    { name = "networkx", specifier = ">=3.4.2" },
-    { name = "pytest", specifier = ">=8.3.5" },
-    { name = "pytest-cov", specifier = ">=6.1.1" },
-    { name = "ruff", specifier = ">=0.11.8" },
+sdist = { url = "https://files.pythonhosted.org/packages/8e/da/fa13f65a01bc6ed77a6fb8cfa4534446cb62143936d07d92bbdb60bc0c74/rdkit2ase-0.1.8.tar.gz", hash = "sha256:7e4ed9e909261aa48faabb9c848dbb67f45edc5632869ed100575741c6c363e6", size = 196899, upload-time = "2025-06-23T19:34:21.664Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/be/929599fbeec465634d824aa39c50ea017af122bc3c044a0813a05c298bf6/rdkit2ase-0.1.8-py3-none-any.whl", hash = "sha256:ebf56f7381af285d0be26b04f49ee43fe3bc0d60ced7ab22440d6e8f2e9ef83b", size = 19033, upload-time = "2025-06-23T19:34:20.347Z" },
 ]
 
 [[package]]
