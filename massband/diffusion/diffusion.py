@@ -21,6 +21,7 @@ jax.config.update("jax_enable_x64", True)
 ureg = pint.UnitRegistry()
 log = logging.getLogger(__name__)
 
+
 class EinsteinSelfDiffusion(zntrack.Node):
     """Compute self-diffusion coefficients using Einstein relation from MD trajectories."""
 
@@ -30,7 +31,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
     batch_size: int = zntrack.params(64)
     fit_window: Tuple[float, float] = zntrack.params((0.2, 0.8))
     method: Literal["direct", "fft"] = zntrack.params("fft")
-    structures: list[str]|None = zntrack.params(None)
+    structures: list[str] | None = zntrack.params(None)
     # TODO: allow not smiles but just the sum formula, e.g. "C6H12O6" for glucose
 
     def get_cells(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -45,7 +46,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
         """Get atomic numbers from the trajectory."""
         io = znh5md.IO(self.file, variable_shape=False, include=["position"])
         return io[0].get_atomic_numbers().tolist()
-    
+
     def get_masses(self) -> List[float]:
         """Get atomic masses from the trajectory."""
         io = znh5md.IO(self.file, variable_shape=False, include=["position"])
@@ -63,7 +64,15 @@ class EinsteinSelfDiffusion(zntrack.Node):
         log.info(f"Loaded positions shape: {pos.shape}")
         return pos  # shape: (n_frames, n_atoms_in_batch, 3)
 
-    def postprocess_positions(self, pos: jnp.ndarray, masses, atomic_numbers, substructures, atom_slice: slice, max_cache_size: int = 10000):
+    def postprocess_positions(
+        self,
+        pos: jnp.ndarray,
+        masses,
+        atomic_numbers,
+        substructures,
+        atom_slice: slice,
+        max_cache_size: int = 10000,
+    ):
         # pos: (n_frames, n_atoms_in_batch, 3)
         # masses: (n_total_atoms,)
         # atomic_numbers: (n_total_atoms,)
@@ -85,7 +94,9 @@ class EinsteinSelfDiffusion(zntrack.Node):
         for sub_name, mols in substructures.items():
             for mol_indices in mols:
                 for idx in mol_indices:
-                    mol_index_map.setdefault(idx, []).append((sub_name, tuple(mol_indices)))
+                    mol_index_map.setdefault(idx, []).append(
+                        (sub_name, tuple(mol_indices))
+                    )
                     molecular_indices.add(idx)
 
         # Cache positions of molecular atoms, append standalone atoms directly
@@ -111,8 +122,12 @@ class EinsteinSelfDiffusion(zntrack.Node):
             for mol_indices in mols:
                 if all(idx in cache for idx in mol_indices):
                     # All atoms in molecule are available, compute COM
-                    pos_stack = jnp.stack([cache[idx] * masses[idx] for idx in mol_indices], axis=0)  # (n_atoms, n_frames, 3)
-                    total_mass = jnp.sum(jnp.array([masses[idx] for idx in mol_indices]))
+                    pos_stack = jnp.stack(
+                        [cache[idx] * masses[idx] for idx in mol_indices], axis=0
+                    )  # (n_atoms, n_frames, 3)
+                    total_mass = jnp.sum(
+                        jnp.array([masses[idx] for idx in mol_indices])
+                    )
                     com = jnp.sum(pos_stack, axis=0) / total_mass  # (n_frames, 3)
 
                     values.append(com)
@@ -124,13 +139,14 @@ class EinsteinSelfDiffusion(zntrack.Node):
         for mol_indices in used_mol_keys:
             for idx in mol_indices:
                 cache.pop(idx, None)
-        print(f"Used {len(used_mol_keys)} molecular indices, remaining cache size: {len(cache)}")
+        print(
+            f"Used {len(used_mol_keys)} molecular indices, remaining cache size: {len(cache)}"
+        )
 
         self.data_cache = cache
 
         values = jnp.stack(values, axis=1)  # shape: (n_frames, n_entities, 3)
         return Zs, values
-
 
     def compute_diffusion_coefficients(
         self, msds: Dict[int, List[jnp.ndarray]], timestep_fs: float
@@ -243,7 +259,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
         """Main computation workflow."""
         log.info("Collecting cell vectors and inverse cell vectors")
         cells, inv_cells = self.get_cells()
-        
+
         substructures = defaultdict(list)
         # dict[str, list[tuple[int, ...]]]
         if self.structures is not None:
@@ -252,12 +268,16 @@ class EinsteinSelfDiffusion(zntrack.Node):
             log.info(f"Searching for substructures in {len(self.structures)} patterns")
             for structure in self.structures:
                 indices = rdkit2ase.match_substructure(
-                    atoms, smiles=structure, suggestions=self.structures,
+                    atoms,
+                    smiles=structure,
+                    suggestions=self.structures,
                 )
                 if len(indices) > 0:
                     substructures[structure].extend(indices)
 
-                log.info(f"Found {len(indices)} matches for substructure {structure} in the dataset.")
+                log.info(
+                    f"Found {len(indices)} matches for substructure {structure} in the dataset."
+                )
             # TODO: in this case, we don't want to compute the of each atom, but rather the center of mass of the molecule, given by the indices
             # - get the mass of each atom in the molecule from the initial structure using ase
             # - assume the indices are the same for all frames, iterate the dataset in the given batch size, for all indices not in the molecule, compute the MSD as usual
@@ -298,16 +318,14 @@ class EinsteinSelfDiffusion(zntrack.Node):
             end = min(start + self.batch_size, n_atoms)
             atom_slice = slice(start, end)
             Z_batch = atomic_numbers[start:end]
-            
+
             pos = self.get_positions(atom_slice)  # shape: (n_frames, batch_size, 3)
             # postprocess positions for substructures
             # TODO: need to unwrap here!!
             # pos = unwrap_positions(pos, cells, inv_cells)
             # TODO: fix unnecessary multiple transposes
             pos = jnp.transpose(pos, (1, 0, 2))
-            pos = vmap(
-                lambda x: unwrap_positions(x, cells, inv_cells)
-            )(pos)
+            pos = vmap(lambda x: unwrap_positions(x, cells, inv_cells))(pos)
             pos = jnp.transpose(pos, (1, 0, 2))
             Z_batch, pos = self.postprocess_positions(
                 pos, masses, atomic_numbers, substructures, atom_slice

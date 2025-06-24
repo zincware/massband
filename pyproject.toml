@@ -28,5 +28,3 @@ dev = [
     "tidynamics>=1.1.2",
     "zndraw>=0.5.10",
 ]
-
-
