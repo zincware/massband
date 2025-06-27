@@ -189,3 +189,4 @@ cython_debug/
 tmp/
 *.h5
 *.png
+/data

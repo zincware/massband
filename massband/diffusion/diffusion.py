@@ -14,6 +14,7 @@ from massband.utils import unwrap_positions
 import rdkit2ase
 from massband.diffusion.utils import compute_msd_direct, compute_msd_fft
 import jax
+from pathlib import Path
 
 # Enable 64-bit precision in JAX for FFT accuracy
 jax.config.update("jax_enable_x64", True)
@@ -24,7 +25,7 @@ log = logging.getLogger(__name__)
 class EinsteinSelfDiffusion(zntrack.Node):
     """Compute self-diffusion coefficients using Einstein relation from MD trajectories."""
 
-    file: str = zntrack.deps_path()
+    file: str|Path = zntrack.deps_path()
     sampling_rate: int = zntrack.params()
     timestep: float = zntrack.params()
     batch_size: int = zntrack.params(64)
