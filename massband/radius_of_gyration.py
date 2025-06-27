@@ -1,5 +1,4 @@
 import zntrack
-import typing as t
 from pathlib import Path
 import znh5md
 import ase
@@ -99,7 +98,7 @@ class RadiusOfGyration(zntrack.Node):
             std_rg = jnp.std(rg_values, axis=0)
 
             plt.figure()
-            plt.plot(mean_rg, label=f"Mean RG")
+            plt.plot(mean_rg, label="Mean RG")
             plt.fill_between(
                 range(len(mean_rg)),
                 mean_rg - std_rg,
@@ -117,7 +116,10 @@ class RadiusOfGyration(zntrack.Node):
             plt.close()
 
     def _calculate_rg(
-        self, molecule_indices: jnp.ndarray, masses: jnp.ndarray, positions_unwrapped: jnp.ndarray
+        self,
+        molecule_indices: jnp.ndarray,
+        masses: jnp.ndarray,
+        positions_unwrapped: jnp.ndarray,
     ) -> jnp.ndarray:
         """Calculate the radius of gyration for a single molecule.
 
