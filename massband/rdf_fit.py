@@ -1,12 +1,15 @@
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Literal, Optional, Dict, Any
+from typing import Literal, Optional, Dict, Any, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import curve_fit
 from scipy.special import erf, erfc
+from scipy.stats import norm
+from uravu.relationship import Relationship
+from uravu.distribution import Distribution
 
 log = logging.getLogger(__name__)
 
@@ -31,28 +34,14 @@ def find_peak_window(
     min_threshold: float = 1.0,
     window_scale: float = 0.5
 ) -> tuple[int, int]:
-    """
-    Find reasonable window around the first peak.
-    
-    Args:
-        r: Distance array
-        g_r: RDF values
-        min_threshold: Minimum g(r) value to consider as peak region
-        window_scale: Window size in Ångströms
-        
-    Returns:
-        Tuple of (start_index, end_index)
-    """
-    # Find first point above threshold
+    """Find reasonable window around the first peak."""
     start_idx = np.argmax(g_r > min_threshold)
     if start_idx == 0 and g_r[0] <= min_threshold:
         raise ValueError("No peak above threshold found")
     
-    # Find peak within remaining data
     peak_idx = start_idx + np.argmax(g_r[start_idx:])
     r_peak = r[peak_idx]
     
-    # Create adaptive window based on Ångström scale
     window_size = int(window_scale / (r[1] - r[0])) if len(r) > 1 else len(r)
     i_min = max(0, peak_idx - window_size)
     i_max = min(len(r), peak_idx + window_size)
@@ -64,70 +53,118 @@ def calculate_peak_uncertainty(
     fit_func: callable,
     popt: np.ndarray,
     pcov: Optional[np.ndarray],
-    n_samples: int = 1000
-) -> float:
-    """
-    Calculate peak position uncertainty using Monte Carlo sampling.
-    
-    Args:
-        r: Distance array
-        fit_func: Fitting function
-        popt: Optimal parameters
-        pcov: Covariance matrix
-        n_samples: Number of samples for MC
-        
-    Returns:
-        Peak position uncertainty
-    """
+    n_samples: int = 1000,
+    ci: float = 0.65
+) -> Tuple[float, np.ndarray, np.ndarray]:
+    """Calculate peak position uncertainty with confidence intervals."""
     if pcov is None:
-        return np.nan
+        return np.nan, np.zeros_like(r), np.zeros_like(r)
     
     try:
-        # Generate parameter samples
         samples = np.random.multivariate_normal(popt, pcov, n_samples)
-        
-        # Find peak positions for each sample
         peak_positions = []
+        fit_curves = []
+        
         for params in samples:
             fit_curve = fit_func(r, *params)
             peak_idx = np.argmax(fit_curve)
             peak_positions.append(r[peak_idx])
+            fit_curves.append(fit_curve)
         
-        return np.std(peak_positions)
+        # Calculate CI for peak position
+        peak_std = np.std(peak_positions)
+        lower_peak, upper_peak = np.percentile(peak_positions, 
+                                             [50*(1-ci), 50*(1+ci)])
+        
+        # Calculate CI for fit curves
+        fit_curves = np.array(fit_curves)
+        lower_ci = np.percentile(fit_curves, 50*(1-ci), axis=0)
+        upper_ci = np.percentile(fit_curves, 50*(1+ci), axis=0)
+        
+        return peak_std, lower_ci, upper_ci
+        
     except Exception as e:
         log.warning(f"Uncertainty calculation failed: {e}")
-        return np.nan
+        return np.nan, np.zeros_like(r), np.zeros_like(r)
+
+def bayesian_fit_uravu(
+    r: np.ndarray,
+    g_r: np.ndarray,
+    fit_func: callable,
+    p0: np.ndarray,
+    bounds: Tuple[Tuple[float, float], ...],
+    n_samples: int = 2000,
+    ci: float = 0.65
+) -> Dict[str, Any]:
+    """Perform Bayesian fitting using uravu."""
+    try:
+        # Create distribution objects for each data point
+        y_distributions = [Distribution(norm.rvs(loc=y, scale=0.1*y, size=1000)) for y in g_r]
+        
+        # Create relationship model
+        modeller = Relationship(
+            fit_func,
+            r,
+            g_r,
+            bounds=bounds,
+            ordinate_error=g_r * 0.1,  # Assuming 10% error TODO: this is a parameter!!
+        )
+        
+        # Run MCMC sampling
+        modeller.mcmc()
+        
+        # Get samples
+        samples = np.array([v.samples for v in modeller.variables]).T
+        
+        # Calculate peak positions and fit curves
+        peak_positions = []
+        fit_curves = []
+        for sample in samples:
+            fit_curve = fit_func(r, *sample)
+            peak_idx = np.argmax(fit_curve)
+            peak_positions.append(r[peak_idx])
+            fit_curves.append(fit_curve)
+        
+        fit_curves = np.array(fit_curves)
+        
+        return {
+            "samples": samples,
+            "peak_positions": np.array(peak_positions),
+            "fit_curves": fit_curves,
+            "r_peak": np.median(peak_positions),
+            "r_peak_uncertainty": np.std(peak_positions),
+            "lower_ci": np.percentile(fit_curves, 50*(1-ci), axis=0),
+            "upper_ci": np.percentile(fit_curves, 50*(1+ci), axis=0),
+            "success": True
+        }
+    except Exception as e:
+        log.error(f"Bayesian fitting failed: {e}")
+        return {
+            "success": False,
+            "r_peak": np.nan,
+            "r_peak_uncertainty": np.nan
+        }
 
 def fit_first_peak(
     r: np.ndarray,
     g_r: np.ndarray,
-    fit_method: Literal["gaussian", "skewed_gaussian", "emg", "none"] = "emg",
+    fit_method: Literal["gaussian", "skewed_gaussian", "emg", "none"],
+    bayesian: bool = False,
     smoothing_sigma: float = 2.0,
     min_threshold: float = 1.0,
-    window_scale: float = 0.5
+    window_scale: float = 0.5,
+    ci: float = 0.65,
+    n_samples: int = 1000
 ) -> Dict[str, Any]:
-    """
-    Find and fit the first peak in RDF data.
-    
-    Args:
-        r: Distance array
-        g_r: RDF values
-        fit_method: Fitting method to use
-        smoothing_sigma: Sigma for Gaussian smoothing
-        min_threshold: Minimum g(r) value for peak detection
-        window_scale: Window size in Ångströms around peak
-        
-    Returns:
-        Dictionary containing results
-    """
-    # Smooth the data
+    """Find and fit the first peak in RDF data."""
     g_r_smooth = gaussian_filter1d(g_r, sigma=smoothing_sigma)
     
-    # Initialize result dict
     result = {
         "r_peak": np.nan,
         "r_peak_uncertainty": np.nan,
         "fit_curve": np.zeros_like(r),
+        "lower_ci": np.zeros_like(r),
+        "upper_ci": np.zeros_like(r),
         "params": None,
         "covariance": None,
         "smoothed_rdf": g_r_smooth,
@@ -135,82 +172,114 @@ def fit_first_peak(
     }
     
     try:
-        # Find peak window
         i_min, i_max = find_peak_window(r, g_r_smooth, min_threshold, window_scale)
         r_fit = r[i_min:i_max]
-        g_fit = g_r_smooth[i_min:i_max]
+        g_fit = g_r[i_min:i_max]
+        g_smooth_fit = g_r_smooth[i_min:i_max]
         
-        # Initial guess for parameters
-        peak_idx = np.argmax(g_fit)
+        peak_idx = np.argmax(g_smooth_fit)
         r_peak_guess = r_fit[peak_idx]
-        amp_guess = g_fit[peak_idx]
-        sigma_guess = 0.2  # Reasonable starting guess for most RDFs
-        
-        if fit_method == "gaussian":
-            p0 = [amp_guess, r_peak_guess, sigma_guess]
-            bounds = ([0, min(r_fit), 0], [np.inf, max(r_fit), np.inf])
-            popt, pcov = curve_fit(gaussian, r_fit, g_fit, p0=p0, bounds=bounds)
-            fit_curve = gaussian(r, *popt)
-            r_peak = popt[1]
+        amp_guess = g_smooth_fit[peak_idx]
+        sigma_guess = 0.2
+
+        if fit_method == "none":
+            result.update({
+                "r_peak": r_peak_guess,
+                "r_peak_uncertainty": 0.0,
+                "success": True
+            })
+        elif bayesian:
+            if fit_method == "gaussian":
+                bounds = ((0, max(g_fit)), (min(r_fit), max(r_fit)), (0, max(r_fit)-min(r_fit)))
+                bayes_result = bayesian_fit_uravu(r_fit, g_fit, gaussian, None, bounds, n_samples, ci)
+            elif fit_method == "skewed_gaussian":
+                bounds = ((0, max(g_fit)), (min(r_fit), max(r_fit)), (0, max(r_fit)-min(r_fit)), (-10, 10))
+                bayes_result = bayesian_fit_uravu(r_fit, g_fit, skewed_gaussian, None, bounds, n_samples, ci)
+            elif fit_method == "emg":
+                bounds = ((0, max(g_fit)), (min(r_fit), max(r_fit)), (0, max(r_fit)-min(r_fit)), (0, 10), (0, 2))
+                bayes_result = bayesian_fit_uravu(r_fit, g_fit, emg, None, bounds, n_samples, ci)
             
-        elif fit_method == "skewed_gaussian":
-            p0 = [amp_guess, r_peak_guess, sigma_guess, 1.0]
-            bounds = ([0, min(r_fit), 0, -np.inf], [np.inf, max(r_fit), np.inf, np.inf])
-            popt, pcov = curve_fit(skewed_gaussian, r_fit, g_fit, p0=p0, bounds=bounds)
-            fit_curve = skewed_gaussian(r, *popt)
-            r_peak = r[np.argmax(fit_curve)]
-            
-        elif fit_method == "emg":
-            p0 = [amp_guess, r_peak_guess, sigma_guess, 1.0, 1.0]
-            bounds = ([0, min(r_fit), 0, 0, 0], [np.inf, max(r_fit), np.inf, np.inf, np.inf])
-            popt, pcov = curve_fit(emg, r_fit, g_fit, p0=p0, bounds=bounds, maxfev=10000)
-            fit_curve = emg(r, *popt)
-            r_peak = popt[1]
-            
-        elif fit_method == "none":
-            r_peak = r_peak_guess
-            pcov = None
-            popt = None
-            fit_curve = np.zeros_like(r)
-            
+            if bayes_result["success"]:
+                # Evaluate median parameters on full r
+                median_params = np.median(bayes_result["samples"], axis=0)
+                fit_func = {
+                    "gaussian": gaussian,
+                    "skewed_gaussian": skewed_gaussian,
+                    "emg": emg
+                }[fit_method]
+
+                fit_curve = fit_func(r, *median_params)
+
+                result.update({
+                    "r_peak": bayes_result["r_peak"],
+                    "r_peak_uncertainty": bayes_result["r_peak_uncertainty"],
+                    "fit_curve": fit_curve,
+                    "lower_ci": np.percentile(
+                        [fit_func(r, *s) for s in bayes_result["samples"]],
+                        50*(1-ci), axis=0
+                    ),
+                    "upper_ci": np.percentile(
+                        [fit_func(r, *s) for s in bayes_result["samples"]],
+                        50*(1+ci), axis=0
+                    ),
+                    "params": median_params,
+                    "covariance": np.cov(bayes_result["samples"].T),
+                    "success": True
+                })
+            else:
+                raise RuntimeError("Bayesian fitting failed")
+
         else:
-            raise ValueError(f"Unknown fit_method '{fit_method}'")
-        
-        # Calculate uncertainty
-        if fit_method != "none":
-            uncertainty = calculate_peak_uncertainty(r, eval(fit_method), popt, pcov)
-        else:
-            uncertainty = 0.0
-        
-        # Update results
-        result.update({
-            "r_peak": r_peak,
-            "r_peak_uncertainty": uncertainty,
-            "fit_curve": fit_curve,
-            "params": popt,
-            "covariance": pcov,
-            "success": True
-        })
-        
+            fit_func = eval(fit_method)
+            
+            if fit_method == "gaussian":
+                p0 = [amp_guess, r_peak_guess, sigma_guess]
+                bounds = ([0, min(r_fit), 0], [np.inf, max(r_fit), np.inf])
+            elif fit_method == "skewed_gaussian":
+                p0 = [amp_guess, r_peak_guess, sigma_guess, 1.0]
+                bounds = ([0, min(r_fit), 0, -np.inf], [np.inf, max(r_fit), np.inf, np.inf])
+            elif fit_method == "emg":
+                p0 = [amp_guess, r_peak_guess, sigma_guess, 1.0, 1.0]
+                bounds = ([0, min(r_fit), 0, 0, 0], [np.inf, max(r_fit), np.inf, np.inf, np.inf])
+            
+            popt, pcov = curve_fit(fit_func, r_fit, g_fit, p0=p0, bounds=bounds)
+            fit_curve = fit_func(r, *popt)
+            
+            # Calculate uncertainty with CI
+            uncertainty, lower_ci, upper_ci = calculate_peak_uncertainty(
+                r, fit_func, popt, pcov, n_samples, ci
+            )
+            
+            result.update({
+                "r_peak": popt[1] if fit_method != "skewed_gaussian" else r[np.argmax(fit_curve)],
+                "r_peak_uncertainty": uncertainty,
+                "fit_curve": fit_curve,
+                "lower_ci": lower_ci,
+                "upper_ci": upper_ci,
+                "params": popt,
+                "covariance": pcov,
+                "success": True
+            })
+            
     except Exception as e:
         log.warning(f"Peak fitting failed: {e}")
-        # Fallback to simple peak detection
         peak_idx = np.argmax(g_r_smooth)
         result["r_peak"] = r[peak_idx]
-        result["r_peak_uncertainty"] = np.nan
     
     return result
-
 def plot_rdf(
     rdfs: defaultdict,
     save_path: Path,
     bin_width: float = 0.1,
     smoothing_sigma: float = 2.0,
-    fit_method: Literal["gaussian", "skewed_gaussian", "emg", "none"] = "skewed_gaussian",
+    bayesian: bool = True,
+    fit_method: Literal["gaussian", "skewed_gaussian", "emg", "none"] = "gaussian",
     min_threshold: float = 1.0,
-    window_scale: float = 0.5
+    window_scale: float = 0.5,
+    ci: float = 0.65,
+    n_samples: int = 1000
 ):
-    """Plot RDFs with peak fitting."""
+    """Plot RDFs with peak fitting and uncertainty visualization."""
     n_rdfs = len(rdfs)
     n_cols = min(3, n_rdfs)
     n_rows = (n_rdfs + n_cols - 1) // n_cols
@@ -226,16 +295,39 @@ def plot_rdf(
             peak_fit = fit_first_peak(
                 r, g_r_mean,
                 fit_method=fit_method,
+                bayesian=bayesian,
                 smoothing_sigma=smoothing_sigma,
                 min_threshold=min_threshold,
-                window_scale=window_scale
+                window_scale=window_scale,
+                ci=ci,
+                n_samples=n_samples
             )
             
             ax.plot(r, g_r_mean, label="RDF (raw)", alpha=0.5)
             ax.plot(r, peak_fit["smoothed_rdf"], "--", label="RDF (smoothed)")
             
+            # Highlighted changes start here - adding fit window visualization
             if fit_method != "none" and peak_fit["success"]:
+                # Get the fit window indices from the peak fitting function
+                i_min, i_max = find_peak_window(r, peak_fit["smoothed_rdf"], min_threshold, window_scale)
+                r_fit = r[i_min:i_max]
+                
+                # Add shaded region for fit window
+                ax.axvspan(r[i_min], r[i_max-1], color='yellow', alpha=0.2, label='Fit window')
+                
                 ax.plot(r, peak_fit["fit_curve"], color="black", label=f"{fit_method} fit")
+                
+                # Plot confidence interval
+                if bayesian:
+                    ax.fill_between(
+                        r, peak_fit["lower_ci"], peak_fit["upper_ci"],
+                        color='gray', alpha=0.3,
+                        label=f"{int(ci*100)}% CI"
+                    )
+                else:
+                    ax.plot(r, peak_fit["lower_ci"], 'k--', alpha=0.3)
+                    ax.plot(r, peak_fit["upper_ci"], 'k--', alpha=0.3,
+                           label=f"{int(ci*100)}% CI")
             
             ax.axvline(
                 peak_fit["r_peak"],
@@ -251,10 +343,8 @@ def plot_rdf(
             ax.grid(True)
             
         except Exception as e:
-            log.error(f"Failed to plot {label_a}-{label_b}: {e}")
-            ax.set_title(f"Error plotting {label_a}-{label_b}")
+            raise e
     
-    # Hide unused axes
     for ax in axes[len(rdfs):]:
         ax.set_visible(False)
     
