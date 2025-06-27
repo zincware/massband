@@ -1,5 +1,6 @@
 import itertools
 from collections import defaultdict
+from pathlib import Path
 
 import ase
 import jax.numpy as jnp
@@ -44,7 +45,7 @@ def compute_mic_distances(positions: jnp.ndarray, cells: jnp.ndarray) -> jnp.nda
     return vmap(mic_frame)(positions, cells)
 
 
-def plot_rdf(rdfs: defaultdict):
+def plot_rdf(rdfs: defaultdict, save_path: Path):
     # find best number of subplots
     n_rdfs = len(rdfs)
     n_cols = 3
@@ -66,7 +67,7 @@ def plot_rdf(rdfs: defaultdict):
         ax.grid(True)
     fig.tight_layout()
     # Save the figure
-    fig.savefig("rdf_plot.png")
+    fig.savefig(save_path)
     plt.close(fig)  # Close the figure to free memory
 
 
@@ -78,6 +79,8 @@ class RadialDistributionFunction(zntrack.Node):
     file: str = zntrack.deps_path()
     batch_size: int = zntrack.params()  # You can set a default or make it configurable
     bin_width: float = zntrack.params(0.05)  # Width of the bins for RDF
+
+    figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
     def run(self):
         io = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
@@ -96,7 +99,8 @@ class RadialDistributionFunction(zntrack.Node):
                 rdfs_all[pair].append(g_r)
 
         # Plot the results
-        plot_rdf(rdfs_all)
+        self.figures.mkdir(parents=True, exist_ok=True)
+        plot_rdf(rdfs_all, self.figures / "rdf_plot.png")
         # TODO: use rdkit2ase to map substructures
 
     def compute_rdf(
