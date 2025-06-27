@@ -10,6 +10,7 @@ from scipy.special import erf, erfc
 from scipy.stats import norm
 from uravu.relationship import Relationship
 from uravu.distribution import Distribution
+import matplotlib.ticker as ticker
 
 log = logging.getLogger(__name__)
 
@@ -17,10 +18,41 @@ def gaussian(x: np.ndarray, amp: float, mu: float, sigma: float) -> np.ndarray:
     """Standard Gaussian function."""
     return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
+def generalized_gaussian(x, amp, mu, sigma, beta):
+    """Generalized Gaussian function."""
+    return amp * np.exp(-np.abs((x - mu) / sigma)**beta)
+
 def skewed_gaussian(x: np.ndarray, amp: float, mu: float, sigma: float, alpha: float) -> np.ndarray:
     """Skewed Gaussian function."""
     norm = (x - mu) / (np.sqrt(2) * sigma)
     return amp * np.exp(-(norm**2)) * (1 + erf(alpha * norm))
+
+# def smooth_skewed_generalized_gaussian(x, amp, mu, sigma, beta, alpha):
+#     core = np.exp(-np.abs((x - mu) / sigma)**beta)
+#     skew = 1 + erf(alpha * (x - mu))
+#     return amp * core * skew
+
+def smooth_skewed_generalized_gaussian(x, amp, mu, sigma, beta, alpha):
+    """
+    Skewed Generalized Gaussian function.
+
+    Parameters:
+        x (array-like): Input values.
+        amp (float): Amplitude (height of the peak).
+        mu (float): Center position.
+        sigma (float): Scale parameter (controls width).
+        beta (float): Shape parameter (controls tail sharpness).
+                      beta=2 -> Gaussian, beta<2 = heavier tails, beta>2 = sharper peak.
+        alpha (float): Skewness parameter.
+                       alpha > 0 = right-skewed, alpha < 0 = left-skewed, 0 = symmetric.
+
+    Returns:
+        np.ndarray: Function values.
+    """
+    norm = (x - mu) / (sigma * (1 + alpha * np.sign(x - mu)))
+    return amp * np.exp(-np.abs(norm) ** beta)
+
+# TODO: skewed_generialized_gaussian
 
 def emg(x: np.ndarray, amp: float, mu: float, sigma: float, lam: float, c: float) -> np.ndarray:
     """Exponentially Modified Gaussian function."""
@@ -40,7 +72,6 @@ def find_peak_window(
         raise ValueError("No peak above threshold found")
     
     peak_idx = start_idx + np.argmax(g_r[start_idx:])
-    r_peak = r[peak_idx]
     
     window_size = int(window_scale / (r[1] - r[0])) if len(r) > 1 else len(r)
     i_min = max(0, peak_idx - window_size)
@@ -148,7 +179,7 @@ def bayesian_fit_uravu(
 def fit_first_peak(
     r: np.ndarray,
     g_r: np.ndarray,
-    fit_method: Literal["gaussian", "skewed_gaussian", "emg", "none"],
+    fit_method: Literal["gaussian", "skewed_gaussian", "emg", "generalized_gaussian", "none", "skewed_generalized_gaussian"],
     bayesian: bool = False,
     smoothing_sigma: float = 2.0,
     min_threshold: float = 1.0,
@@ -177,6 +208,7 @@ def fit_first_peak(
         g_fit = g_r[i_min:i_max]
         g_smooth_fit = g_r_smooth[i_min:i_max]
         
+        # use the smoothed data for initial guesses
         peak_idx = np.argmax(g_smooth_fit)
         r_peak_guess = r_fit[peak_idx]
         amp_guess = g_smooth_fit[peak_idx]
@@ -189,8 +221,15 @@ def fit_first_peak(
                 "success": True
             })
         elif bayesian:
+            # TODO: improve the bounds and initial guesses!
             if fit_method == "gaussian":
-                bounds = ((0, max(g_fit)), (min(r_fit), max(r_fit)), (0, max(r_fit)-min(r_fit)))
+                sigma_min = 0
+                sigma_max = (max(r_fit) - min(r_fit))
+                bounds = (
+                    (0, max(g_fit) * 1.2),             # amp
+                    (min(r_fit), max(r_fit)),          # mu
+                    (sigma_min, sigma_max)             # sigma
+                )
                 bayes_result = bayesian_fit_uravu(r_fit, g_fit, gaussian, None, bounds, n_samples, ci)
             elif fit_method == "skewed_gaussian":
                 bounds = ((0, max(g_fit)), (min(r_fit), max(r_fit)), (0, max(r_fit)-min(r_fit)), (-10, 10))
@@ -198,6 +237,12 @@ def fit_first_peak(
             elif fit_method == "emg":
                 bounds = ((0, max(g_fit)), (min(r_fit), max(r_fit)), (0, max(r_fit)-min(r_fit)), (0, 10), (0, 2))
                 bayes_result = bayesian_fit_uravu(r_fit, g_fit, emg, None, bounds, n_samples, ci)
+            elif fit_method == "generalized_gaussian":
+                bounds = ((0, max(g_fit)), (min(r_fit), max(r_fit)), (0, max(r_fit)-min(r_fit)), (2, 5))
+                bayes_result = bayesian_fit_uravu(r_fit, g_fit, generalized_gaussian, None, bounds, n_samples, ci)
+            elif fit_method == "skewed_generalized_gaussian":
+                bounds = ((0, max(g_fit)), (min(r_fit), max(r_fit)), (0, max(r_fit)-min(r_fit)), (2, 5), (-10, 10))
+                bayes_result = bayesian_fit_uravu(r_fit, g_fit, smooth_skewed_generalized_gaussian, None, bounds, n_samples, ci)
             
             if bayes_result["success"]:
                 # Evaluate median parameters on full r
@@ -205,7 +250,9 @@ def fit_first_peak(
                 fit_func = {
                     "gaussian": gaussian,
                     "skewed_gaussian": skewed_gaussian,
-                    "emg": emg
+                    "emg": emg,
+                    "generalized_gaussian": generalized_gaussian,
+                    "skewed_generalized_gaussian": smooth_skewed_generalized_gaussian
                 }[fit_method]
 
                 fit_curve = fit_func(r, *median_params)
@@ -230,7 +277,14 @@ def fit_first_peak(
                 raise RuntimeError("Bayesian fitting failed")
 
         else:
-            fit_func = eval(fit_method)
+            fit_funcs = {
+                "gaussian": gaussian,
+                "skewed_gaussian": skewed_gaussian,
+                "emg": emg,
+                "generalized_gaussian": generalized_gaussian,
+                "skewed_generalized_gaussian": smooth_skewed_generalized_gaussian
+            }
+            fit_func = fit_funcs[fit_method]
             
             if fit_method == "gaussian":
                 p0 = [amp_guess, r_peak_guess, sigma_guess]
@@ -241,6 +295,12 @@ def fit_first_peak(
             elif fit_method == "emg":
                 p0 = [amp_guess, r_peak_guess, sigma_guess, 1.0, 1.0]
                 bounds = ([0, min(r_fit), 0, 0, 0], [np.inf, max(r_fit), np.inf, np.inf, np.inf])
+            elif fit_method == "generalized_gaussian":
+                p0 = [amp_guess, r_peak_guess, sigma_guess, 2.0]
+                bounds = ([0, min(r_fit), 0, 2], [np.inf, max(r_fit), np.inf, 5])
+            elif fit_method == "skewed_generalized_gaussian":
+                p0 = [amp_guess, r_peak_guess, sigma_guess, 2.0, 1.0]
+                bounds = ([0, min(r_fit), 0, 2, -np.inf], [np.inf, max(r_fit), np.inf, 5, np.inf])
             
             popt, pcov = curve_fit(fit_func, r_fit, g_fit, p0=p0, bounds=bounds)
             fit_curve = fit_func(r, *popt)
@@ -262,20 +322,20 @@ def fit_first_peak(
             })
             
     except Exception as e:
-        log.warning(f"Peak fitting failed: {e}")
-        peak_idx = np.argmax(g_r_smooth)
-        result["r_peak"] = r[peak_idx]
+        raise e
     
     return result
+
+
 def plot_rdf(
     rdfs: defaultdict,
     save_path: Path,
     bin_width: float = 0.1,
     smoothing_sigma: float = 2.0,
     bayesian: bool = True,
-    fit_method: Literal["gaussian", "skewed_gaussian", "emg", "none"] = "gaussian",
+    fit_method: Literal["gaussian", "skewed_gaussian", "emg", "generalized_gaussian", "skewed_generalized_gaussian", "none"] = "skewed_generalized_gaussian",
     min_threshold: float = 1.0,
-    window_scale: float = 0.5,
+    window_scale: float = 0.50,
     ci: float = 0.65,
     n_samples: int = 1000
 ):
@@ -304,23 +364,23 @@ def plot_rdf(
             )
             
             ax.plot(r, g_r_mean, label="RDF (raw)", alpha=0.5)
-            ax.plot(r, peak_fit["smoothed_rdf"], "--", label="RDF (smoothed)")
+            # ax.plot(r, peak_fit["smoothed_rdf"], "--", label="RDF (smoothed)")
             
             # Highlighted changes start here - adding fit window visualization
             if fit_method != "none" and peak_fit["success"]:
                 # Get the fit window indices from the peak fitting function
                 i_min, i_max = find_peak_window(r, peak_fit["smoothed_rdf"], min_threshold, window_scale)
-                r_fit = r[i_min:i_max]
-                
-                # Add shaded region for fit window
-                ax.axvspan(r[i_min], r[i_max-1], color='yellow', alpha=0.2, label='Fit window')
-                
-                ax.plot(r, peak_fit["fit_curve"], color="black", label=f"{fit_method} fit")
-                
+
+                # plot vertical span for the fit window
+                # ax.axvspan(r[i_min], r[i_max-1], color='cyan', alpha=0.1, label='Fit window')
+
+
+                ax.plot(r[i_min: i_max], peak_fit["fit_curve"][i_min: i_max], color="black", label=f"{fit_method} fit")
+
                 # Plot confidence interval
                 if bayesian:
                     ax.fill_between(
-                        r, peak_fit["lower_ci"], peak_fit["upper_ci"],
+                        r[i_min: i_max], peak_fit["lower_ci"][i_min: i_max], peak_fit["upper_ci"][i_min: i_max],
                         color='gray', alpha=0.3,
                         label=f"{int(ci*100)}% CI"
                     )
@@ -335,12 +395,23 @@ def plot_rdf(
                 linestyle=":",
                 label=f"$r_\\mathrm{{peak}}$ = {peak_fit['r_peak']:.2f} ± {peak_fit['r_peak_uncertainty']:.2f} Å"
             )
+            # shade the peak region
+            peak_region = (peak_fit["r_peak"] - peak_fit["r_peak_uncertainty"],
+                           peak_fit["r_peak"] + peak_fit["r_peak_uncertainty"])
+            ax.axvspan(peak_region[0], peak_region[1], color='red', alpha=0.1, label='Peak region')
             
             ax.set_xlabel("Distance r (Å)")
             ax.set_ylabel("g(r)")
             ax.set_title(f"RDF: {label_a} - {label_b}")
-            ax.legend()
+            ax.legend(loc="lower left", fontsize='small')
+            # Set minor ticks every 0.1 units on x-axis
+            ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.1))
+
+            # Optional: set minor ticks on y-axis too (e.g. every 0.1)
+            ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.1))
+
             ax.grid(True)
+            ax.grid(True, which='minor', linestyle=':', linewidth=0.5, alpha=0.3)  # Lighter minor grid
             
         except Exception as e:
             raise e
