@@ -14,11 +14,38 @@ from rdkit import Chem
 
 
 class RadiusOfGyration(zntrack.Node):
+    """Calculate the radius of gyration for molecules in a trajectory.
+
+    Attributes
+    ----------
+    file : str or Path
+        The path to the trajectory file. This is a dependency for the node.
+    suggestions : list[str], optional
+        A list of SMILES strings to help with bond detection in `rdkit2ase`.
+        Defaults to an empty list.
+    figures : Path, optional
+        The path to the directory where the output figures will be saved.
+    """
+
     file: str | Path = zntrack.deps_path()
     suggestions: list[str] = zntrack.params(default_factory=list)
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
-    def get_data(self):
+    def get_data(self) -> dict:
+        """Get data from the trajectory file.
+
+        This method reads the trajectory file and returns a dictionary with
+        positions, cells, inverse cells, and frames.
+
+        Returns
+        -------
+        dict
+            A dictionary with the following keys:
+            - positions: The positions of the atoms in the trajectory.
+            - cells: The cell vectors of the trajectory.
+            - inv_cells: The inverse cell vectors of the trajectory.
+            - frames: The list of ase.Atoms objects.
+        """
         io = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
         frames: list[ase.Atoms] = io[:]
         positions = jnp.stack([atoms.positions for atoms in frames])
@@ -32,7 +59,12 @@ class RadiusOfGyration(zntrack.Node):
             "frames": frames,
         }
 
-    def run(self):
+    def run(self) -> None:
+        """Run the radius of gyration calculation.
+
+        This method calculates the radius of gyration for each molecule in the
+        trajectory and saves the results as plots.
+        """
         data = self.get_data()
         unwrap_positions_vmap = vmap(
             partial(unwrap_positions, cells=data["cells"], inv_cells=data["inv_cells"]),
@@ -84,7 +116,25 @@ class RadiusOfGyration(zntrack.Node):
             plt.savefig(self.figures / f"rog_{filename_smiles}.png")
             plt.close()
 
-    def _calculate_rg(self, molecule_indices, masses, positions_unwrapped):
+    def _calculate_rg(
+        self, molecule_indices: jnp.ndarray, masses: jnp.ndarray, positions_unwrapped: jnp.ndarray
+    ) -> jnp.ndarray:
+        """Calculate the radius of gyration for a single molecule.
+
+        Parameters
+        ----------
+        molecule_indices : jnp.ndarray
+            The indices of the atoms in the molecule.
+        masses : jnp.ndarray
+            The masses of the atoms.
+        positions_unwrapped : jnp.ndarray
+            The unwrapped positions of the atoms.
+
+        Returns
+        -------
+        jnp.ndarray
+            The radius of gyration for each frame.
+        """
         molecule_indices = jnp.array(list(molecule_indices))
         molecule_masses = masses[molecule_indices]
         total_mass = jnp.sum(molecule_masses)
