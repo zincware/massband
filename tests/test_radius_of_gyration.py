@@ -1,12 +1,11 @@
-import ase.build
-import pytest
-import znh5md
 import os
 from pathlib import Path
 
-import massband
-BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
+import pytest
 
+import massband
+
+BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
 
 
 def test_radius_of_gyration_node(tmp_path):
