@@ -3,7 +3,6 @@ from jax import jit
 import numpy as np
 
 
-
 @jit
 def compute_msd_direct(x: jnp.ndarray) -> jnp.ndarray:
     """Compute the Mean Squared Displacement (MSD) using direct method.
@@ -91,4 +90,3 @@ def compute_msd_fft(positions: np.ndarray) -> np.ndarray:
     _compute_msd_fft_jit = jit(_compute_msd_fft, static_argnames=("n_fft", "N"))
 
     return _compute_msd_fft_jit(pos.reshape((N, -1)), n_fft=n_fft, N=N)
-

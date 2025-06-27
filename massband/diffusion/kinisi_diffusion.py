@@ -2,7 +2,7 @@ import logging
 import pickle
 from pathlib import Path
 from typing import Optional, Union
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -68,7 +68,9 @@ class KinisiSelfDiffusion(zntrack.Node):
             log.info(f"Searching for substructures in {len(self.structures)} patterns")
             for structure in self.structures:
                 indices = rdkit2ase.match_substructure(
-                    data["frames"][0], smiles=structure, suggestions=self.structures,
+                    data["frames"][0],
+                    smiles=structure,
+                    suggestions=self.structures,
                 )
                 if indices:
                     substructures[structure].extend(indices)
@@ -80,7 +82,9 @@ class KinisiSelfDiffusion(zntrack.Node):
             flat_indices = [i for sublist in indices for i in sublist]
             sub_frames = [atoms[flat_indices] for atoms in data["frames"]]
             specie_indices = rdkit2ase.match_substructure(
-                sub_frames[0], smiles=structure, suggestions=self.structures,
+                sub_frames[0],
+                smiles=structure,
+                suggestions=self.structures,
             )
             masses = sub_frames[0][specie_indices[0]].get_masses().tolist()
 
@@ -124,34 +128,36 @@ class KinisiSelfDiffusion(zntrack.Node):
             # MSD with std
             fig, ax = plt.subplots()
             ax.errorbar(data.dt, data.msd, data.msd_std)
-            ax.set_ylabel('MSD/Å$^2$')
-            ax.set_xlabel(r'$\Delta t$/ps')
+            ax.set_ylabel("MSD/Å$^2$")
+            ax.set_xlabel(r"$\Delta t$/ps")
             ax.set_title(f"{data.structure} MSD with std")
             fig.savefig(self.data_path / f"{data.structure}_msd_std.png", dpi=300)
             plt.close(fig)
 
             # MSD with credible intervals
             fig, ax = plt.subplots()
-            ax.plot(data.dt, data.msd, 'k-')
+            ax.plot(data.dt, data.msd, "k-")
             for i, ci in enumerate(credible_intervals):
                 low, high = np.percentile(data.distribution, ci, axis=1)
                 ax.fill_between(
                     data.dt, low, high, alpha=alpha[i], color="#0173B2", lw=0
                 )
             # TODO: save start_dt in pickle as well?
-            ax.axvline(self.start_dt, c='k', ls='--')
-            ax.set_ylabel('MSD/Å$^2$')
-            ax.set_xlabel(r'$\Delta t$/ps')
+            ax.axvline(self.start_dt, c="k", ls="--")
+            ax.set_ylabel("MSD/Å$^2$")
+            ax.set_xlabel(r"$\Delta t$/ps")
             ax.set_title(f"{data.structure} MSD credible intervals")
-            fig.savefig(self.data_path / f"{data.structure}_credible_intervals.png", dpi=300)
+            fig.savefig(
+                self.data_path / f"{data.structure}_credible_intervals.png", dpi=300
+            )
             plt.close(fig)
 
             # Histogram of diffusion coefficients
             fig, ax = plt.subplots()
             ax.hist(data.D_samples, density=True, bins=50)
-            ax.axvline(data.D_n, c='k')
-            ax.set_xlabel('$D$/cm$^2$s$^{-1}$')
-            ax.set_ylabel('$p(D)$/cm$^2$s$^{-1}$')
+            ax.axvline(data.D_n, c="k")
+            ax.set_xlabel("$D$/cm$^2$s$^{-1}$")
+            ax.set_ylabel("$p(D)$/cm$^2$s$^{-1}$")
             ax.set_title(f"{data.structure} Diffusion Histogram")
             fig.savefig(self.data_path / f"{data.structure}_hist.png", dpi=300)
             plt.close(fig)

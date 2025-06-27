@@ -1,66 +1,25 @@
-# conftest.py
-import numpy as np
 import pytest
-from ase.build import bulk
-import ase
-from ase import units
-from ase.lattice.cubic import FaceCenteredCubic
-from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
-from ase.md.verlet import VelocityVerlet
-from ase.calculators.emt import EMT
+import ase.build
 import znh5md
+from massband.rdf import RadialDistributionFunction as RDF
 
-import massband
 
 @pytest.fixture
-def emt_md(tmp_path):
-    """Generate a fake MD trajectory by rattling atoms on a grid."""
+def dummy_h5md_file(tmp_path):
+    """Create a dummy H5MD trajectory file for testing."""
+    atoms = ase.build.molecule("H2O")
+    atoms.cell = [10, 10, 10]  # Set a dummy cell
+    atoms.pbc = True
 
-    # TODO: need better data, e.g. containing molecules
-
-    size = 3
-
-    atoms = FaceCenteredCubic(
-        directions=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
-        symbol='Cu',
-        size=(size, size, size),
-        pbc=True,
-    )
-
-    atoms.calc = EMT()
-
-    MaxwellBoltzmannDistribution(atoms, temperature_K=300)
-
-    dyn = VelocityVerlet(atoms, 5 * units.fs)  # 5 fs time step.
-
-    io = znh5md.IO(
-        filename=tmp_path / "md.h5",
-        variable_shape=False,
-    )
-
-    def save_atoms():
-        io.append(atoms)
-
-    dyn.attach(save_atoms, interval=10)
-    dyn.run(100)
-    return tmp_path / "md.h5"
+    file_path = tmp_path / "test_traj.h5"
+    znh5md.write(file_path, [atoms] * 5)  # Write 5 frames
+    return file_path
 
 
+def test_rdf_node(dummy_h5md_file, tmp_path):
+    """Test the RDF node."""
+    node = RDF(file=dummy_h5md_file, batch_size=5)
+    node.run()
 
-def test_RadialDistributionFunction(emt_md):
-    """Test the radial distribution function calculation."""
-    rdf = massband.RadialDistributionFunction(
-        file=emt_md, batch_size=10,
-    )
-    
-    # Calculate RDF
-    rdf.run()
-    
-    # # Check if the result is a numpy array
-    # assert isinstance(rdf.result, np.ndarray)
-    
-    # # Check if the shape is correct
-    # assert rdf.result.shape == (int(5.0 / 0.1) + 1,)
-
-    # # Check if the values are non-negative
-    # assert np.all(rdf.result >= 0)
+    # Check if the output file is created in the node's output directory
+    assert (node.figures / "rdf_plot.png").exists()
