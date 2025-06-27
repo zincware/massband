@@ -31,6 +31,7 @@ class RadiusOfGyration(zntrack.Node):
     file: str | Path = zntrack.deps_path()
     suggestions: list[str] = zntrack.params(default_factory=list)
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
+    results: dict = zntrack.metrics()
 
     def get_data(self) -> dict:
         """Get data from the trajectory file.
@@ -79,6 +80,7 @@ class RadiusOfGyration(zntrack.Node):
         graph = rdkit2ase.ase2networkx(atoms_0, suggestions=self.suggestions)
 
         rg_by_smiles = {}
+        self.results = {}
 
         for molecule_indices in nx.connected_components(graph):
             subgraph = graph.subgraph(molecule_indices)
@@ -98,6 +100,10 @@ class RadiusOfGyration(zntrack.Node):
             rg_values = jnp.array(rg_values_list)
             mean_rg = jnp.mean(rg_values, axis=0)
             std_rg = jnp.std(rg_values, axis=0)
+            self.results[smiles] = {
+                "mean": jnp.mean(mean_rg).item(),
+                "std": jnp.mean(std_rg).item(),
+            }
 
             plt.figure()
             plt.plot(mean_rg, label="Mean RG")
