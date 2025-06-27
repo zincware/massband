@@ -58,6 +58,7 @@ class KinisiSelfDiffusion(zntrack.Node):
         }
 
     def run(self):
+        # TODO: need to make sure that in the first frame, all molecules are fully wrapped!!
         np.random.seed(self.seed)
         self.results = {}
         data = self.get_data()

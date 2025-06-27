@@ -1,74 +1,87 @@
 import itertools
+import logging
 from collections import defaultdict
 from pathlib import Path
 
 import ase
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
+import rdkit2ase
 import znh5md
 import zntrack
-from ase.data import chemical_symbols
 from jax import vmap
-from laufband import Laufband
+
+from massband.rdf_fit import plot_rdf
+from massband.utils import unwrap_positions, wrap_positions
+
+log = logging.getLogger(__name__)
 
 
-def compute_mic_distances(positions: jnp.ndarray, cells: jnp.ndarray) -> jnp.ndarray:
+def compute_rdf(
+    positions_a, positions_b, cell, bin_edges, batch_size=100, exclude_self=False
+):
     """
-    Computes the pairwise distance matrix for each frame, accounting for periodic boundary conditions
-    using the minimum image convention (MIC).
+    Compute the radial distribution function (RDF) g(r) between two sets of particles over time.
 
-    Parameters:
-    - positions: (N, i, 3) array of atomic positions
-    - cells: (N, 3, 3) array of unit cell matrices per frame
+    Parameters
+    ----------
+    positions_a : jnp.ndarray
+        Shape (n_frames, n_atoms_a, 3). Wrapped positions of group A.
+    positions_b : jnp.ndarray
+        Shape (n_frames, n_atoms_b, 3). Wrapped positions of group B.
+    cell : jnp.ndarray
+        Shape (n_frames, 3, 3). Cell matrix for each frame.
+    bin_edges : jnp.ndarray
+        Shape (n_bins + 1,). Bin edges for g(r).
+    batch_size : int
+        Batch size for vectorized RDF calculation over time (memory-performance tuning).
 
-    Returns:
-    - distances: (N, i, i) array of pairwise distances per frame
+    Returns
+    -------
+    g_r : jnp.ndarray
+        RDF values, shape (n_bins,)
     """
+    n_frames = positions_a.shape[0]
+    n_bins = len(bin_edges) - 1
+    bin_width = bin_edges[1] - bin_edges[0]
 
-    def mic_frame(pos: jnp.ndarray, cell: jnp.ndarray):
-        """
-        MIC-based distance computation for a single frame.
+    def mic_distances(frame_a, frame_b, frame_cell, exclude_self=True):
+        inv_cell = jnp.linalg.inv(frame_cell.T)
+        frac_a = frame_a @ inv_cell
+        frac_b = frame_b @ inv_cell
 
-        pos: (i, 3)
-        cell: (3, 3)
-        returns: (i, i) distance matrix
-        """
-        inv_cell = jnp.linalg.inv(cell.T)  # (3, 3)
-        frac = pos @ inv_cell  # (i, 3) fractional
-        delta_frac = frac[:, None, :] - frac[None, :, :]  # (i, i, 3)
-        delta_frac = delta_frac - jnp.round(delta_frac)  # wrap to [-0.5, 0.5)
-        delta_cart = delta_frac @ cell.T  # back to Cartesian
-        dists = jnp.linalg.norm(delta_cart, axis=-1)  # (i, i)
+        delta_frac = frac_a[:, None, :] - frac_b[None, :, :]
+        delta_frac -= jnp.round(delta_frac)
+        delta_cart = delta_frac @ frame_cell.T
+        dists = jnp.linalg.norm(delta_cart, axis=-1)
+
+        if exclude_self and frame_a.shape[0] == frame_b.shape[0]:
+            dists = dists.at[jnp.diag_indices_from(dists)].set(
+                jnp.inf
+            )  # ignore self-distance
+
         return dists
 
-    # Vectorize over frames (N)
-    return vmap(mic_frame)(positions, cells)
+    def rdf_single_frame(pos_a, pos_b, frame_cell):
+        exclude_self = jnp.all(pos_a == pos_b)  # works if same object (intra-group)
+        dists = mic_distances(pos_a, pos_b, frame_cell).flatten()
+        hist = jnp.histogram(dists, bins=bin_edges)[0]
+        return hist
 
+    # Batch RDF evaluation over all frames
+    histograms = vmap(rdf_single_frame)(positions_a, positions_b, cell)
+    hist_sum = jnp.sum(histograms, axis=0)
 
-def plot_rdf(rdfs: defaultdict, save_path: Path):
-    # find best number of subplots
-    n_rdfs = len(rdfs)
-    n_cols = 3
-    n_rows = (n_rdfs + n_cols - 1) // n_cols  # Ceiling division
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows))
-    axes = axes.flatten()
+    # Normalize RDF
+    volume = jnp.linalg.det(cell)
+    r_lower = bin_edges[:-1]
+    r_upper = bin_edges[1:]
+    shell_volume = (4 / 3) * jnp.pi * (r_upper**3 - r_lower**3)  # Shell volume per bin
 
-    for ax, ((a, b), g_r_list) in zip(axes, rdfs.items()):
-        g_r_array = jnp.stack(g_r_list)
-        g_r_mean = jnp.mean(g_r_array, axis=0)
-        r = 0.5 * (jnp.arange(len(g_r_mean)) + 0.5) * 0.1
-        ax.plot(r, g_r_mean, label=f"{chemical_symbols[a]}-{chemical_symbols[b]}")
-        ax.set_xlabel("Distance r (Å)")
-        ax.set_ylabel("g(r)")
-        ax.set_title(
-            f"Radial Distribution Function: {chemical_symbols[a]}-{chemical_symbols[b]}"
-        )
-        ax.legend()
-        ax.grid(True)
-    fig.tight_layout()
-    # Save the figure
-    fig.savefig(save_path)
-    plt.close(fig)  # Close the figure to free memory
+    number_density = positions_b.shape[1] / jnp.mean(volume)  # mean number density
+    norm_factor = positions_a.shape[1] * number_density * shell_volume * n_frames
+
+    g_r = hist_sum / norm_factor
+    return g_r
 
 
 class RadialDistributionFunction(zntrack.Node):
@@ -79,88 +92,105 @@ class RadialDistributionFunction(zntrack.Node):
     file: str = zntrack.deps_path()
     batch_size: int = zntrack.params()  # You can set a default or make it configurable
     bin_width: float = zntrack.params(0.05)  # Width of the bins for RDF
+    structures: list[str] = zntrack.params()
 
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
     def run(self):
+        # TODO: need to ensure that in the first frame, all molecules are fully unwrapped!!
         io = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
-        size = len(io)
-        batch_start_index = list(range(0, size, self.batch_size))
-        worker = Laufband(batch_start_index, cleanup=True)
+        frames: list[ase.Atoms] = io[:]
+        print(f"Loaded {len(frames)} frames from {self.file}")
+        positions = jnp.stack([atoms.positions for atoms in frames])
+        cells = jnp.stack([atoms.cell[:] for atoms in frames])
+        masses = jnp.array(frames[0].get_masses())
+        inv_cells = jnp.linalg.inv(cells)
+        print(f"Positions shape: {positions.shape}, Cells shape: {cells.shape}")
+        positions = jnp.transpose(positions, (1, 0, 2))
+        positions = vmap(lambda x: unwrap_positions(x, cells, inv_cells))(positions)
+        positions = jnp.transpose(positions, (1, 0, 2))
+        print(f"Unwrapped positions shape: {positions.shape}")
 
-        # Collect RDFs for each species pair over all batches
-        rdfs_all = defaultdict(list)
+        # TODO: all of this could also go to utils? E.g. a get_center_of_mass positions function
+        substructures = defaultdict(list)
+        # a dict of list[tuple[int, ...]]
+        if self.structures:
+            log.info(f"Searching for substructures in {len(self.structures)} patterns")
+            for structure in self.structures:
+                indices = rdkit2ase.match_substructure(
+                    frames[0],
+                    smiles=structure,
+                    suggestions=self.structures,
+                )
+                if indices:
+                    substructures[structure].extend(indices)
+                    log.info(f"Found {len(indices)} matches for {structure}")
 
-        for start in worker:
-            end = min(start + self.batch_size, size)
-            batch = io[start:end]
-            rdf_batch = self.compute_rdf(batch)
-            for pair, (r, g_r) in rdf_batch.items():
-                rdfs_all[pair].append(g_r)
+        # TODO: move to utils
+        com_positions = defaultdict(list)
 
-        # Plot the results
-        self.figures.mkdir(parents=True, exist_ok=True)
-        plot_rdf(rdfs_all, self.figures / "rdf_plot.png")
-        # TODO: use rdkit2ase to map substructures
+        for structure, all_indices in substructures.items():
+            log.info(f"Computing COM positions for {structure}")
 
-    def compute_rdf(
-        self, batch: list[ase.Atoms]
-    ) -> dict[tuple[int, int], tuple[jnp.ndarray, jnp.ndarray]]:
-        # Convert ASE objects to JAX arrays
-        positions = jnp.stack(
-            [jnp.array(atoms.positions) for atoms in batch]
-        )  # (N, i, 3)
-        cells = jnp.stack([jnp.array(atoms.cell[:]) for atoms in batch])  # (N, 3, 3)
-        atomic_numbers = jnp.array(batch[0].get_atomic_numbers())  # (i,)
+            for mol_indices in all_indices:
+                mol_masses = jnp.array(
+                    [masses[i] for i in mol_indices]
+                )  # (n_atoms_in_mol,)
+                mol_positions = positions[:, mol_indices]  # (n_frames, n_atoms_in_mol, 3)
 
-        N_frames, N_atoms, _ = positions.shape
-        distances = compute_mic_distances(positions, cells)  # (N, i, i)
+                # Compute COM for each frame: weighted sum over atoms
+                # Numerator: sum_i(m_i * r_i), Denominator: sum_i(m_i)
+                mass_sum = jnp.sum(mol_masses)
+                weighted_positions = (
+                    mol_positions * mol_masses[None, :, None]
+                )  # broadcast to (n_frames, n_atoms, 3)
+                com = jnp.sum(weighted_positions, axis=1) / mass_sum  # (n_frames, 3)
 
-        # Only take upper triangle (i < j)
-        i, j = jnp.triu_indices(N_atoms, k=1)  # (n_pairs,)
-        species_i = atomic_numbers[i]  # (n_pairs,)
-        species_j = atomic_numbers[j]  # (n_pairs,)
+                com_positions[structure].append(com)
 
-        pairwise_dists = distances[:, i, j].reshape(-1)  # (N_frames * n_pairs,)
+        com_positions = {
+            structure: jnp.stack(coms) for structure, coms in com_positions.items()
+        }
+        log.info(
+            f"Found COM positions: { {k: v.shape for k, v in com_positions.items()} }"
+        )
 
-        # Define bins
-        r_max = 10.0
-        bin_edges = jnp.arange(0, r_max + self.bin_width, self.bin_width)
+        # now wrap the compute the rdfs and wrap the positions
+
+        rdfs = defaultdict(list)
+        bin_edges = jnp.arange(
+            0.0, 10.0 + self.bin_width, self.bin_width
+        )  # You can customize max range
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-        shell_volumes = (4 / 3) * jnp.pi * (bin_edges[1:] ** 3 - bin_edges[:-1] ** 3)
 
-        # Volume per frame (averaged)
-        volume = jnp.mean(jnp.linalg.det(cells))
+        for struct_a, struct_b in itertools.combinations_with_replacement(
+            com_positions.keys(), 2
+        ):
+            pos_a = com_positions[struct_a]  # shape (n_mols_a, n_frames, 3)
+            pos_b = com_positions[struct_b]  # shape (n_mols_b, n_frames, 3)
 
-        # Unique atomic numbers
-        unique_species = set(atomic_numbers.tolist())
+            # Transpose for RDF: shape -> (n_frames, n_mols, 3)
+            pos_a = jnp.transpose(pos_a, (1, 0, 2))
+            pos_b = jnp.transpose(pos_b, (1, 0, 2))
 
-        rdf_by_species = {}
+            print(f"Computing RDF for {struct_a} - {struct_b}")
+            print(f"Positions A shape: {pos_a.shape}, Positions B shape: {pos_b.shape}")
 
-        for a, b in itertools.combinations_with_replacement(sorted(unique_species), 2):
-            # Mask for matching pairs (upper triangle only)
-            frame_mask = ((species_i == a) & (species_j == b)) | (
-                (species_i == b) & (species_j == a)
-            )  # shape: (n_pairs,)
-            frame_mask = jnp.asarray(frame_mask)
+            # Wrap positions into the box
+            wrapped_a = wrap_positions(pos_a, cells)
+            wrapped_b = wrap_positions(pos_b, cells)
 
-            # Repeat this mask for each frame
-            full_mask = jnp.tile(frame_mask, N_frames)  # shape: (N_frames * n_pairs,)
-            selected_dists = pairwise_dists[full_mask]
+            # Compute RDF over all frames
+            g_r = compute_rdf(
+                positions_a=wrapped_a,
+                positions_b=wrapped_b,
+                cell=cells,
+                bin_edges=bin_edges,
+                batch_size=self.batch_size,
+                exclude_self=True,  # Exclude self-distances for intra-group RDF
+            )  # shape (n_bins,)
 
-            if selected_dists.size == 0:
-                continue  # skip empty
+            rdfs[(struct_a, struct_b)].append(g_r)
 
-            # Histogram
-            hist = jnp.histogram(selected_dists, bins=bin_edges)[0]
-
-            # Estimate number density of this pair type
-            n_pair_per_frame = frame_mask.sum()
-            number_density = (n_pair_per_frame * N_frames) / volume
-
-            ideal_counts = number_density * shell_volumes
-            g_r = hist / ideal_counts
-
-            rdf_by_species[(int(a), int(b))] = (bin_centers, g_r)
-
-        return rdf_by_species
+        self.figures.mkdir(exist_ok=True, parents=True)
+        plot_rdf(rdfs, self.figures / "rdf.png")

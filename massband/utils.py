@@ -37,3 +37,31 @@ def unwrap_positions(
     # Back to cartesian coordinates
     pos_unwrapped = jnp.einsum("nij,nj->ni", cells, frac_unwrapped)
     return pos_unwrapped
+
+
+@jit
+def wrap_positions(pos: jnp.ndarray, cells: jnp.ndarray) -> jnp.ndarray:
+    """Wrap positions into the unit cell.
+
+    Parameters
+    ----------
+    pos : jnp.ndarray
+        Shape (n_frames, n_atoms, 3)
+    cells : jnp.ndarray
+        Shape (n_frames, 3, 3)
+
+    Returns
+    -------
+    jnp.ndarray
+        Wrapped positions in Cartesian coordinates, shape (n_frames, n_atoms, 3)
+    """
+    # Convert to fractional: frac = pos @ inv(cell)
+    inv_cells = jnp.linalg.inv(cells)
+    frac = jnp.einsum("fij,faj->fai", inv_cells, pos)  # (n_frames, n_atoms, 3)
+
+    # Wrap fractional positions
+    frac_wrapped = frac % 1.0
+
+    # Convert back to cartesian: pos = frac @ cell
+    pos_wrapped = jnp.einsum("fij,faj->fai", cells, frac_wrapped)
+    return pos_wrapped
