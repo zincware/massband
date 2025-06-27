@@ -39,6 +39,7 @@ class KinisiSelfDiffusion(zntrack.Node):
     structures: Optional[list[str]] = zntrack.params(None)
     start_dt: float = zntrack.params(50)  # in ps
     results: dict = zntrack.metrics()
+    seed: int = zntrack.params(42)
 
     data_path: Path = zntrack.outs_path(zntrack.nwd / "diffusion_data")
 
@@ -57,6 +58,7 @@ class KinisiSelfDiffusion(zntrack.Node):
         }
 
     def run(self):
+        np.random.seed(self.seed)
         self.results = {}
         data = self.get_data()
         unwrap_positions_vmap = vmap(
@@ -118,8 +120,23 @@ class KinisiSelfDiffusion(zntrack.Node):
             with open(self.data_path / f"{structure}.pkl", "wb") as f:
                 pickle.dump(result, f)
 
+            # Compute uncertainty statistics from D_samples
+            D_mean = result.D_n
+            D_std = np.std(result.D_samples)
+            ci68 = np.percentile(result.D_samples, [16, 84])
+            ci95 = np.percentile(result.D_samples, [2.5, 97.5])
+
+            # Optional: asymmetric error bars
+            uncertainty_low = D_mean - ci68[0]
+            uncertainty_high = ci68[1] - D_mean
+
+            # Store in results
             self.results[structure] = {
                 "diffusion_coefficient": result.D_n,
+                "std": D_std,
+                "credible_interval_68": ci68.tolist(),
+                "credible_interval_95": ci95.tolist(),
+                "asymmetric_uncertainty": [uncertainty_low, uncertainty_high],
             }
 
         self.plot()
@@ -157,12 +174,46 @@ class KinisiSelfDiffusion(zntrack.Node):
             )
             plt.close(fig)
 
-            # Histogram of diffusion coefficients
             fig, ax = plt.subplots()
-            ax.hist(data.D_samples, density=True, bins=50)
-            ax.axvline(data.D_n, c="k")
+            ax.hist(
+                data.D_samples, density=True, bins=50, color="lightblue", edgecolor="k"
+            )
+            ax.axvline(data.D_n, c="red", ls="--", label="MAP (D_n)")
+            ax.axvline(
+                self.results[data.structure]["credible_interval_68"][0],
+                c="blue",
+                ls=":",
+                label="68% CI",
+            )
+            ax.axvline(
+                self.results[data.structure]["credible_interval_68"][1], c="blue", ls=":"
+            )
+
             ax.set_xlabel("$D$/cm$^2$s$^{-1}$")
             ax.set_ylabel("$p(D)$/cm$^2$s$^{-1}$")
             ax.set_title(f"{data.structure} Diffusion Histogram")
+            ax.legend()
+
+            # Annotate uncertainty
+            textstr = "\n".join(
+                (
+                    f"Mean: {self.results[data.structure]['diffusion_coefficient']:.3e}",
+                    f"Std: ±{self.results[data.structure]['std']:.3e}",
+                    f"68% CI: [{self.results[data.structure]['credible_interval_68'][0]:.3e}, {self.results[data.structure]['credible_interval_68'][1]:.3e}]",
+                    f"95% CI: [{self.results[data.structure]['credible_interval_95'][0]:.3e}, {self.results[data.structure]['credible_interval_95'][1]:.3e}]",
+                    f"Asymmetric Uncertainty: [{self.results[data.structure]['asymmetric_uncertainty'][0]:.3e}, {self.results[data.structure]['asymmetric_uncertainty'][1]:.3e}]",
+                )
+            )
+            ax.text(
+                0.95,
+                0.95,
+                textstr,
+                transform=ax.transAxes,
+                verticalalignment="top",
+                horizontalalignment="right",
+                bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
+                fontsize=8,
+            )
+
             fig.savefig(self.data_path / f"{data.structure}_hist.png", dpi=300)
             plt.close(fig)
