@@ -1,6 +1,7 @@
-import pytest
 import ase.build
+import pytest
 import znh5md
+
 from massband.radius_of_gyration import RadiusOfGyration
 
 

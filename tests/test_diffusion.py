@@ -1,17 +1,19 @@
-import pytest
+import os
+from pathlib import Path
+
 import numpy as np
+import numpy.testing as npt
 import pint
-from ase import Atoms
+import pytest
+import tidynamics
+
 import massband
 from massband.diffusion.utils import compute_msd_direct, compute_msd_fft
-import numpy.testing as npt
-import tidynamics
-import znh5md
-from pathlib import Path
 
 ureg = pint.UnitRegistry()
 
-BMIM_BF4_FILE = (Path(__file__).parent / "data" / "bmim_bf4.h5").resolve()
+BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
+
 
 @pytest.fixture
 def diffusive_positions() -> np.ndarray:
@@ -55,19 +57,20 @@ def test_compute_msd_direct(diffusive_positions):
     npt.assert_allclose(msd_1[10:-10], msd_3[10:-10], rtol=5e-4)
 
 
+def test_KinisiSelfDiffusion(tmp_path):
+    os.chdir(tmp_path)
 
-def test_EinsteinSelfDiffusion(tmp_path):
-    """Test the Einstein self-diffusion coefficient calculation."""
-    diff = massband.EinsteinSelfDiffusion(
+    diff = massband.KinisiSelfDiffusion(
         file=BMIM_BF4_FILE,
-        sampling_rate=1,
-        timestep=0.5,  # fs
-        batch_size=1,
-        fit_window=(0.05, 0.95),  # we don't have a ballistic regime
+        sampling_rate=100,
+        time_step=0.5,  # fs
+        start_dt=100,
+        structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
     )
-
     diff.run()
-    # Now we expect results to be calculated, not None
-    assert diff.results is not None
-    assert diff.results[1]["diffusion_coefficient"] == pytest.approx(1.0, rel=0.1)
-
+    assert diff.results["CCCCN1C=C[N+](=C1)C"]["diffusion_coefficient"] == pytest.approx(
+        1.423e-06, rel=0.1
+    )
+    assert diff.results["[B-](F)(F)(F)F"]["diffusion_coefficient"] == pytest.approx(
+        9.018e-07, rel=0.1
+    )

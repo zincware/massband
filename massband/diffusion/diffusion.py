@@ -1,20 +1,21 @@
-from collections import defaultdict
 import logging
-from typing import Dict, List, Tuple, Literal
+from collections import defaultdict
+from pathlib import Path
+from typing import Dict, List, Literal, Tuple
 
+import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import pint
+import rdkit2ase
 import znh5md
 import zntrack
 from ase.data import chemical_symbols
 from jax import jit, vmap
 from tqdm import tqdm
-from massband.utils import unwrap_positions
-import rdkit2ase
+
 from massband.diffusion.utils import compute_msd_direct, compute_msd_fft
-import jax
-from pathlib import Path
+from massband.utils import unwrap_positions
 
 # Enable 64-bit precision in JAX for FFT accuracy
 jax.config.update("jax_enable_x64", True)
@@ -26,7 +27,7 @@ log = logging.getLogger(__name__)
 class EinsteinSelfDiffusion(zntrack.Node):
     """Compute self-diffusion coefficients using Einstein relation from MD trajectories."""
 
-    file: str|Path = zntrack.deps_path()
+    file: str | Path = zntrack.deps_path()
     sampling_rate: int = zntrack.params()
     timestep: float = zntrack.params()
     batch_size: int = zntrack.params(64)
@@ -58,14 +59,12 @@ class EinsteinSelfDiffusion(zntrack.Node):
         # TODO: for COM diffusion, we should process this here ?
 
         log.info(f"Loading positions for index {index}")
-        io = znh5md.IO(
-            self.file, variable_shape=False, include=["position"], mask=index
-        )
+        io = znh5md.IO(self.file, variable_shape=False, include=["position"], mask=index)
         pos = jnp.stack([atoms.positions for atoms in io[:]])
         log.info(f"Loaded positions shape: {pos.shape}")
         return pos  # shape: (n_frames, n_atoms_in_batch, 3)
 
-    def postprocess_positions(
+    def postprocess_positions(  # noqa: C901
         self,
         pos: jnp.ndarray,
         masses,
@@ -126,9 +125,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
                     pos_stack = jnp.stack(
                         [cache[idx] * masses[idx] for idx in mol_indices], axis=0
                     )  # (n_atoms, n_frames, 3)
-                    total_mass = jnp.sum(
-                        jnp.array([masses[idx] for idx in mol_indices])
-                    )
+                    total_mass = jnp.sum(jnp.array([masses[idx] for idx in mol_indices]))
                     com = jnp.sum(pos_stack, axis=0) / total_mass  # (n_frames, 3)
 
                     values.append(com)
@@ -256,7 +253,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
         plt.savefig(filename, dpi=300, bbox_inches="tight")
         plt.close()
 
-    def run(self):
+    def run(self):  # noqa: C901
         """Main computation workflow."""
         log.info("Collecting cell vectors and inverse cell vectors")
         cells, inv_cells = self.get_cells()

@@ -1,15 +1,17 @@
-import zntrack
+from functools import partial
 from pathlib import Path
-import znh5md
+
 import ase
 import jax.numpy as jnp
-from jax import vmap
-from functools import partial
-from massband.utils import unwrap_positions
-import rdkit2ase
-import networkx as nx
 import matplotlib.pyplot as plt
+import networkx as nx
+import rdkit2ase
+import znh5md
+import zntrack
+from jax import vmap
 from rdkit import Chem
+
+from massband.utils import unwrap_positions
 
 
 class RadiusOfGyration(zntrack.Node):

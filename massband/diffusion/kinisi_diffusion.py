@@ -1,21 +1,22 @@
 import logging
 import pickle
+from collections import defaultdict
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Optional, Union
-from dataclasses import dataclass
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
+import rdkit2ase
 import zntrack
 from ase import Atoms
-from collections import defaultdict
-from functools import partial
 from jax import vmap
-from massband.utils import unwrap_positions
-from znh5md import IO
-import rdkit2ase
 from kinisi.analyze import DiffusionAnalyzer
+from znh5md import IO
+
+from massband.utils import unwrap_positions
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class KinisiSelfDiffusion(zntrack.Node):
     time_step: float = zntrack.params()
     structures: Optional[list[str]] = zntrack.params(None)
     start_dt: float = zntrack.params(50)  # in ps
+    results: dict = zntrack.metrics()
 
     data_path: Path = zntrack.outs_path(zntrack.nwd / "diffusion_data")
 
@@ -55,6 +57,7 @@ class KinisiSelfDiffusion(zntrack.Node):
         }
 
     def run(self):
+        self.results = {}
         data = self.get_data()
         unwrap_positions_vmap = vmap(
             partial(unwrap_positions, cells=data["cells"], inv_cells=data["inv_cells"]),
@@ -76,7 +79,7 @@ class KinisiSelfDiffusion(zntrack.Node):
                     substructures[structure].extend(indices)
                     log.info(f"Found {len(indices)} matches for {structure}")
 
-        self.data_path.mkdir(exist_ok=True)
+        self.data_path.mkdir(exist_ok=True, parents=True)
 
         for structure, indices in substructures.items():
             flat_indices = [i for sublist in indices for i in sublist]
@@ -115,6 +118,10 @@ class KinisiSelfDiffusion(zntrack.Node):
             with open(self.data_path / f"{structure}.pkl", "wb") as f:
                 pickle.dump(result, f)
 
+            self.results[structure] = {
+                "diffusion_coefficient": result.D_n,
+            }
+
         self.plot()
 
     def plot(self):
@@ -139,9 +146,7 @@ class KinisiSelfDiffusion(zntrack.Node):
             ax.plot(data.dt, data.msd, "k-")
             for i, ci in enumerate(credible_intervals):
                 low, high = np.percentile(data.distribution, ci, axis=1)
-                ax.fill_between(
-                    data.dt, low, high, alpha=alpha[i], color="#0173B2", lw=0
-                )
+                ax.fill_between(data.dt, low, high, alpha=alpha[i], color="#0173B2", lw=0)
             # TODO: save start_dt in pickle as well?
             ax.axvline(self.start_dt, c="k", ls="--")
             ax.set_ylabel("MSD/Å$^2$")

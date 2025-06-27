@@ -1,6 +1,7 @@
-import lazy_loader as lazy
 import logging
 import sys
+
+import lazy_loader as lazy
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

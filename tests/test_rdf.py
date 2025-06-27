@@ -1,7 +1,8 @@
-import pytest
 import ase.build
+import pytest
 import znh5md
-from massband.rdf import RadialDistributionFunction as RDF
+
+from massband.rdf import RadialDistributionFunction
 
 
 @pytest.fixture
@@ -18,7 +19,7 @@ def dummy_h5md_file(tmp_path):
 
 def test_rdf_node(dummy_h5md_file, tmp_path):
     """Test the RDF node."""
-    node = RDF(file=dummy_h5md_file, batch_size=5)
+    node = RadialDistributionFunction(file=dummy_h5md_file, batch_size=5)
     node.run()
 
     # Check if the output file is created in the node's output directory

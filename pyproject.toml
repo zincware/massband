@@ -28,3 +28,10 @@ dev = [
     "tidynamics>=1.1.2",
     "zndraw>=0.5.10",
 ]
+
+
+[tool.ruff]
+line-length = 90
+
+[tool.ruff.lint]
+select = ["F", "C", "I"] #, "ANN"]
