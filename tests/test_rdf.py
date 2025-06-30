@@ -1,10 +1,9 @@
-from pathlib import Path
 import os
+from pathlib import Path
+
 from massband.rdf import RadialDistributionFunction
 
-
 BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
-
 
 
 def test_rdf_node(tmp_path):

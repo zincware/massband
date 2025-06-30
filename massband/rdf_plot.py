@@ -1,5 +1,4 @@
 import logging
-from collections import defaultdict
 from pathlib import Path
 from typing import DefaultDict, Tuple
 
@@ -8,7 +7,7 @@ import matplotlib.ticker as ticker
 import numpy as np
 
 # Import the fitting functions and dataclass result
-from massband.rdf_fit import fit_first_peak, find_peak_window_by_gradient, PeakFitResult
+from massband.rdf_fit import PeakFitResult, find_peak_window_by_gradient, fit_first_peak
 
 log = logging.getLogger(__name__)
 
