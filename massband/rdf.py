@@ -149,7 +149,7 @@ class RadialDistributionFunction(zntrack.Node):
     structures: list[str] | None = zntrack.params()
 
     bayesian: bool = zntrack.params(False)  # Whether to use Bayesian fitting
-    fit_method: FIT_METHODS = zntrack.params("gaussian")  # Method for fitting the
+    fit_method: FIT_METHODS = zntrack.params("none")  # Method for fitting the
 
     results: dict[str, list[float]] = zntrack.outs()
 

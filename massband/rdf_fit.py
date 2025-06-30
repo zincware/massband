@@ -253,7 +253,6 @@ def bayesian_fit_uravu(
 
 # --- MAIN PEAK FITTING FUNCTION ---
 
-
 def fit_first_peak(  # noqa: C901
     r: np.ndarray,
     g_r: np.ndarray,
@@ -265,10 +264,10 @@ def fit_first_peak(  # noqa: C901
     ci: float = 0.65,
     n_samples: int = 1000,
 ) -> PeakFitResult:
-    """Find and fit the first peak in RDF data and return the result as a dataclass."""
+    """Find and optionally fit the first peak in RDF data and return the result as a dataclass."""
     result = PeakFitResult(smoothed_rdf=gaussian_filter1d(g_r, sigma=smoothing_sigma))
+
     try:
-        # Determine peak window using gradient method
         i_min, i_max = find_peak_window_by_gradient(r, result.smoothed_rdf, min_threshold)
         r_fit = r[i_min:i_max]
         g_fit = g_r[i_min:i_max]
@@ -280,19 +279,30 @@ def fit_first_peak(  # noqa: C901
         sigma_guess = 0.2
 
         if fit_method == "none":
+            # Return smoothed peak location without fitting
             result.r_peak = r_peak_guess
             result.r_peak_uncertainty = 0.0
             result.success = True
+            return result  # ⬅️ Early return
 
-        elif bayesian:
+        # --- Bayesian fitting ---
+        if bayesian:
+            func_map = {
+                "gaussian": gaussian,
+                "skewed_gaussian": skewed_gaussian,
+                "emg": emg,
+                "generalized_gaussian": generalized_gaussian,
+                "skewed_generalized_gaussian": smooth_skewed_generalized_gaussian,
+            }
+            fit_func = func_map.get(fit_method)
+            if fit_func is None:
+                raise ValueError("Invalid fitting method")
+
             if fit_method == "gaussian":
                 bounds = (
                     (0, max(g_fit) * 1.2),
                     (min(r_fit), max(r_fit)),
                     (0, max(r_fit) - min(r_fit)),
-                )
-                bayes_result = bayesian_fit_uravu(
-                    r_fit, g_fit, gaussian, bounds, n_samples, ci
                 )
             elif fit_method == "skewed_gaussian":
                 bounds = (
@@ -300,9 +310,6 @@ def fit_first_peak(  # noqa: C901
                     (min(r_fit), max(r_fit)),
                     (0, max(r_fit) - min(r_fit)),
                     (-10, 10),
-                )
-                bayes_result = bayesian_fit_uravu(
-                    r_fit, g_fit, skewed_gaussian, bounds, n_samples, ci
                 )
             elif fit_method == "emg":
                 bounds = (
@@ -312,18 +319,12 @@ def fit_first_peak(  # noqa: C901
                     (0, 10),
                     (0, 2),
                 )
-                bayes_result = bayesian_fit_uravu(
-                    r_fit, g_fit, emg, bounds, n_samples, ci
-                )
             elif fit_method == "generalized_gaussian":
                 bounds = (
                     (0, max(g_fit)),
                     (min(r_fit), max(r_fit)),
                     (0, max(r_fit) - min(r_fit)),
                     (2, 5),
-                )
-                bayes_result = bayesian_fit_uravu(
-                    r_fit, g_fit, generalized_gaussian, bounds, n_samples, ci
                 )
             elif fit_method == "skewed_generalized_gaussian":
                 bounds = (
@@ -333,27 +334,15 @@ def fit_first_peak(  # noqa: C901
                     (2, 5),
                     (-10, 10),
                 )
-                bayes_result = bayesian_fit_uravu(
-                    r_fit,
-                    g_fit,
-                    smooth_skewed_generalized_gaussian,
-                    bounds,
-                    n_samples,
-                    ci,
-                )
             else:
                 raise ValueError("Invalid fitting method")
 
+            bayes_result = bayesian_fit_uravu(
+                r_fit, g_fit, fit_func, bounds, n_samples, ci
+            )
+
             if bayes_result.success:
                 median_params = np.median(bayes_result.samples, axis=0)
-                func_map = {
-                    "gaussian": gaussian,
-                    "skewed_gaussian": skewed_gaussian,
-                    "emg": emg,
-                    "generalized_gaussian": generalized_gaussian,
-                    "skewed_generalized_gaussian": smooth_skewed_generalized_gaussian,
-                }
-                fit_func = func_map[fit_method]
                 result.fit_curve = fit_func(r, *median_params)
                 result.r_peak = bayes_result.r_peak
                 result.r_peak_uncertainty = bayes_result.r_peak_uncertainty
@@ -365,6 +354,7 @@ def fit_first_peak(  # noqa: C901
             else:
                 raise RuntimeError("Bayesian fitting failed")
 
+        # --- Classic curve fitting ---
         else:
             func_map = {
                 "gaussian": gaussian,
@@ -382,25 +372,16 @@ def fit_first_peak(  # noqa: C901
                 bounds = ([0, min(r_fit), 0], [np.inf, max(r_fit), np.inf])
             elif fit_method == "skewed_gaussian":
                 p0 = [amp_guess, r_peak_guess, sigma_guess, 1.0]
-                bounds = (
-                    [0, min(r_fit), 0, -np.inf],
-                    [np.inf, max(r_fit), np.inf, np.inf],
-                )
+                bounds = ([0, min(r_fit), 0, -np.inf], [np.inf, max(r_fit), np.inf, np.inf])
             elif fit_method == "emg":
                 p0 = [amp_guess, r_peak_guess, sigma_guess, 1.0, 1.0]
-                bounds = (
-                    [0, min(r_fit), 0, 0, 0],
-                    [np.inf, max(r_fit), np.inf, np.inf, np.inf],
-                )
+                bounds = ([0, min(r_fit), 0, 0, 0], [np.inf, max(r_fit), np.inf, np.inf, np.inf])
             elif fit_method == "generalized_gaussian":
                 p0 = [amp_guess, r_peak_guess, sigma_guess, 2.0]
                 bounds = ([0, min(r_fit), 0, 2], [np.inf, max(r_fit), np.inf, 5])
             elif fit_method == "skewed_generalized_gaussian":
                 p0 = [amp_guess, r_peak_guess, sigma_guess, 2.0, 1.0]
-                bounds = (
-                    [0, min(r_fit), 0, 2, -np.inf],
-                    [np.inf, max(r_fit), np.inf, 5, np.inf],
-                )
+                bounds = ([0, min(r_fit), 0, 2, -np.inf], [np.inf, max(r_fit), np.inf, 5, np.inf])
             else:
                 raise ValueError("Invalid fitting method")
 
@@ -410,11 +391,7 @@ def fit_first_peak(  # noqa: C901
                 r, fit_func, popt, pcov, n_samples, ci
             )
 
-            result.r_peak = (
-                popt[1]
-                if fit_method != "skewed_gaussian"
-                else r[np.argmax(result.fit_curve)]
-            )
+            result.r_peak = popt[1]
             result.r_peak_uncertainty = uncertainty
             result.lower_ci = lower_ci
             result.upper_ci = upper_ci
