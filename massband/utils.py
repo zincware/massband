@@ -11,7 +11,7 @@ def unwrap_positions(
     Parameters
     ----------
     pos : jnp.ndarray
-        Positions of atoms in cartesian coordinates, shape (n_frames, 3).
+        Positions of atoms in cartesian coordinates, shape (n_frames, n_atoms, 3).
     cells : jnp.ndarray
         Cell vectors for each frame, shape (n_frames, 3, 3).
     inv_cells : jnp.ndarray
@@ -20,10 +20,10 @@ def unwrap_positions(
     Returns
     -------
     jnp.ndarray
-        Unwrapped positions in cartesian coordinates, shape (n_frames, 3).
+        Unwrapped positions in cartesian coordinates, shape (n_frames, n_atoms, 3).
     """
     # Convert to fractional coordinates per frame
-    frac = jnp.einsum("nij,nj->ni", inv_cells, pos)
+    frac = jnp.einsum("fij,faj->fai", inv_cells, pos)
 
     # Compute wrapped displacements
     delta_frac = jnp.diff(frac, axis=0)
@@ -35,7 +35,7 @@ def unwrap_positions(
     )
 
     # Back to cartesian coordinates
-    pos_unwrapped = jnp.einsum("nij,nj->ni", cells, frac_unwrapped)
+    pos_unwrapped = jnp.einsum("fij,faj->fai", cells, frac_unwrapped)
     return pos_unwrapped
 
 

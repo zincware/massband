@@ -7,7 +7,6 @@ import ase
 import jax.numpy as jnp
 import rdkit2ase
 import znh5md
-from jax import vmap
 
 from massband.utils import unwrap_positions, wrap_positions
 
@@ -27,9 +26,7 @@ def center_of_mass(
     masses = jnp.array(frames[0].get_masses())
     inv_cells = jnp.linalg.inv(cells)
     log.info(f"Positions shape: {positions.shape}, Cells shape: {cells.shape}")
-    positions = jnp.transpose(positions, (1, 0, 2))
-    positions = vmap(lambda x: unwrap_positions(x, cells, inv_cells))(positions)
-    positions = jnp.transpose(positions, (1, 0, 2))
+    positions = unwrap_positions(positions, cells, inv_cells)
     log.info(f"Unwrapped positions shape: {positions.shape}")
 
     # TODO: all of this could also go to utils? E.g. a get_center_of_mass positions function

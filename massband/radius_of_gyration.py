@@ -1,4 +1,3 @@
-from functools import partial
 from pathlib import Path
 
 import ase
@@ -8,7 +7,6 @@ import networkx as nx
 import rdkit2ase
 import znh5md
 import zntrack
-from jax import vmap
 from rdkit import Chem
 
 from massband.utils import unwrap_positions
@@ -68,12 +66,9 @@ class RadiusOfGyration(zntrack.Node):
         trajectory and saves the results as plots.
         """
         data = self.get_data()
-        unwrap_positions_vmap = vmap(
-            partial(unwrap_positions, cells=data["cells"], inv_cells=data["inv_cells"]),
-            in_axes=(1,),
+        positions_unwrapped = unwrap_positions(
+            data["positions"], data["cells"], data["inv_cells"]
         )
-        # positions_unwrapped will have shape (n_atoms, n_frames, 3)
-        positions_unwrapped = unwrap_positions_vmap(data["positions"])
 
         atoms_0 = data["frames"][0]
         masses = jnp.array(atoms_0.get_masses())
@@ -148,14 +143,14 @@ class RadiusOfGyration(zntrack.Node):
         molecule_indices = jnp.array(list(molecule_indices))
         molecule_masses = masses[molecule_indices]
         total_mass = jnp.sum(molecule_masses)
-        molecule_positions = positions_unwrapped[molecule_indices, :, :]
+        molecule_positions = positions_unwrapped[:, molecule_indices, :]
         center_of_mass = (
-            jnp.sum(molecule_masses[:, None, None] * molecule_positions, axis=0)
+            jnp.sum(molecule_masses[None, :, None] * molecule_positions, axis=1)
             / total_mass
         )
-        displacements = molecule_positions - center_of_mass[None, :, :]
+        displacements = molecule_positions - center_of_mass[:, None, :]
         squared_distances = jnp.sum(displacements**2, axis=2)
-        mass_weighted_sq_dist = molecule_masses[:, None] * squared_distances
-        sum_mass_weighted_sq_dist = jnp.sum(mass_weighted_sq_dist, axis=0)
+        mass_weighted_sq_dist = molecule_masses[None, :] * squared_distances
+        sum_mass_weighted_sq_dist = jnp.sum(mass_weighted_sq_dist, axis=1)
         rg_squared = sum_mass_weighted_sq_dist / total_mass
         return jnp.sqrt(rg_squared)

@@ -2,7 +2,6 @@ import logging
 import pickle
 from collections import defaultdict
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
 from typing import Optional, Union
 
@@ -12,7 +11,6 @@ import numpy as np
 import rdkit2ase
 import zntrack
 from ase import Atoms
-from jax import vmap
 from kinisi.analyze import DiffusionAnalyzer
 from znh5md import IO
 
@@ -62,11 +60,9 @@ class KinisiSelfDiffusion(zntrack.Node):
         np.random.seed(self.seed)
         self.results = {}
         data = self.get_data()
-        unwrap_positions_vmap = vmap(
-            partial(unwrap_positions, cells=data["cells"], inv_cells=data["inv_cells"]),
-            in_axes=(1,),
+        positions_unwrapped = unwrap_positions(
+            data["positions"], data["cells"], data["inv_cells"]
         )
-        positions_unwrapped = unwrap_positions_vmap(data["positions"])
         log.info(f"Unwrapped positions shape: {positions_unwrapped.shape}")
 
         substructures = defaultdict(list)

@@ -16,7 +16,7 @@ def wrapped_trajectory():
 
     # particle moving twice across the boundary
     return (
-        np.array([pos1, pos2, pos3, pos1, pos2, pos3, pos1, pos2, pos3]),
+        np.transpose([[pos1, pos2, pos3, pos1, pos2, pos3, pos1, pos2, pos3]], (1, 0, 2)),
         np.array([cell] * 9),
         np.array([np.linalg.inv(cell)] * 9),
     )
@@ -24,8 +24,7 @@ def wrapped_trajectory():
 
 def test_unwrap_positions(wrapped_trajectory):
     positions, cell, inv_cell = wrapped_trajectory
-    # raise ValueError(f"Unwrap positions test: {positions.shape}, {cell.shape}, {inv_cell.shape}")
-
+    
     # Unwrap the positions
     unwrapped_positions = unwrap_positions(positions, cell, inv_cell)
 
@@ -44,4 +43,4 @@ def test_unwrap_positions(wrapped_trajectory):
         ]
     )
 
-    assert jnp.allclose(unwrapped_positions, expected_unwrapped)
+    assert jnp.allclose(unwrapped_positions[:, 0, :], expected_unwrapped)

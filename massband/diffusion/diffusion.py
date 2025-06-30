@@ -322,9 +322,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
             # TODO: need to unwrap here!!
             # pos = unwrap_positions(pos, cells, inv_cells)
             # TODO: fix unnecessary multiple transposes
-            pos = jnp.transpose(pos, (1, 0, 2))
-            pos = vmap(lambda x: unwrap_positions(x, cells, inv_cells))(pos)
-            pos = jnp.transpose(pos, (1, 0, 2))
+            pos = unwrap_positions(pos, cells, inv_cells)
             Z_batch, pos = self.postprocess_positions(
                 pos, masses, atomic_numbers, substructures, atom_slice
             )
