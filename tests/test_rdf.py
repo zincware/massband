@@ -30,24 +30,25 @@ def test_rdf_node_full(tmp_path):
         structures=None,
     )
     node.run()
-    assert len(node.results[("H", "H")]) == 200
-    assert len(node.results[("H", "B")]) == 200
-    assert len(node.results[("H", "C")]) == 200
-    assert len(node.results[("H", "N")]) == 200
-    assert len(node.results[("H", "F")]) == 200
-
-    assert len(node.results[("B", "B")]) == 200
-    assert len(node.results[("B", "C")]) == 200
-    assert len(node.results[("B", "N")]) == 200
-    assert len(node.results[("B", "F")]) == 200
-
-    assert len(node.results[("C", "C")]) == 200
-    assert len(node.results[("C", "N")]) == 200
-    assert len(node.results[("C", "F")]) == 200
-
-    assert len(node.results[("N", "N")]) == 200
-    assert len(node.results[("N", "F")]) == 200
-
-    assert len(node.results[("F", "F")]) == 200
+    ALL_KEYS = [
+        ("H", "H"),
+        ("H", "B"),
+        ("H", "C"),
+        ("H", "N"),
+        ("H", "F"),
+        ("B", "B"),
+        ("B", "C"),
+        ("B", "N"),
+        ("B", "F"),
+        ("C", "C"),
+        ("C", "N"),
+        ("C", "F"),
+        ("N", "N"),
+        ("N", "F"),
+        ("F", "F"),
+    ]
+    for key in ALL_KEYS:
+        assert len(node.results[key]) == 200
+        assert sum(node.results[key]) > 0
 
     assert len(node.results) == 15
