@@ -254,7 +254,7 @@ def bayesian_fit_uravu(
 # --- MAIN PEAK FITTING FUNCTION ---
 
 
-def fit_first_peak(
+def fit_first_peak(  # noqa: C901
     r: np.ndarray,
     g_r: np.ndarray,
     fit_method: str,
