@@ -57,7 +57,9 @@ def plot_rdf(
 
         # Visualize the fit window
         try:
-            i_min, i_max = find_peak_window_by_gradient(r, peak_fit.smoothed_rdf, min_threshold)
+            i_min, i_max = find_peak_window_by_gradient(
+                r, peak_fit.smoothed_rdf, min_threshold
+            )
         except Exception as e:
             log.error(f"Error finding peak window for {label_a} - {label_b}: {e}")
             continue
@@ -85,7 +87,9 @@ def plot_rdf(
                 )
             else:
                 ax.plot(r, peak_fit.lower_ci, "k--", alpha=0.3)
-                ax.plot(r, peak_fit.upper_ci, "k--", alpha=0.3, label=f"{int(ci * 100)}% CI")
+                ax.plot(
+                    r, peak_fit.upper_ci, "k--", alpha=0.3, label=f"{int(ci * 100)}% CI"
+                )
 
             ax.axvline(
                 peak_fit.r_peak,
@@ -93,8 +97,10 @@ def plot_rdf(
                 linestyle=":",
                 label=f"$r_\\mathrm{{peak}}$ = {peak_fit.r_peak:.2f} ± {peak_fit.r_peak_uncertainty:.2f} Å",
             )
-            peak_region = (peak_fit.r_peak - peak_fit.r_peak_uncertainty,
-                           peak_fit.r_peak + peak_fit.r_peak_uncertainty)
+            peak_region = (
+                peak_fit.r_peak - peak_fit.r_peak_uncertainty,
+                peak_fit.r_peak + peak_fit.r_peak_uncertainty,
+            )
             ax.axvspan(
                 peak_region[0],
                 peak_region[1],
@@ -112,7 +118,7 @@ def plot_rdf(
         ax.grid(True, which="major", linestyle="-", linewidth=0.8, alpha=0.8)
         ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.3)
 
-    for ax in axes[len(rdfs):]:
+    for ax in axes[len(rdfs) :]:
         ax.set_visible(False)
 
     fig.tight_layout()

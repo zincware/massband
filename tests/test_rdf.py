@@ -1,26 +1,20 @@
-import ase.build
-import pytest
-import znh5md
-
+from pathlib import Path
+import os
 from massband.rdf import RadialDistributionFunction
 
 
-@pytest.fixture
-def dummy_h5md_file(tmp_path):
-    """Create a dummy H5MD trajectory file for testing."""
-    atoms = ase.build.molecule("H2O")
-    atoms.cell = [10, 10, 10]  # Set a dummy cell
-    atoms.pbc = True
-
-    file_path = tmp_path / "test_traj.h5"
-    znh5md.write(file_path, [atoms] * 5)  # Write 5 frames
-    return file_path
+BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
 
 
-def test_rdf_node(dummy_h5md_file, tmp_path):
-    """Test the RDF node."""
-    node = RadialDistributionFunction(file=dummy_h5md_file, batch_size=5)
+
+def test_rdf_node(tmp_path):
+    os.chdir(tmp_path)
+    node = RadialDistributionFunction(
+        file=BMIM_BF4_FILE,
+        batch_size=5,
+        structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
+    )
     node.run()
 
     # Check if the output file is created in the node's output directory
-    assert (node.figures / "rdf_plot.png").exists()
+    assert (node.figures / "rdf.png").exists()

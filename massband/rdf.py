@@ -89,7 +89,7 @@ class RadialDistributionFunction(zntrack.Node):
     Class to represent a radial distribution function (RDF) in a molecular dynamics simulation.
     """
 
-    file: str = zntrack.deps_path()
+    file: str | Path = zntrack.deps_path()
     batch_size: int = zntrack.params()  # You can set a default or make it configurable
     bin_width: float = zntrack.params(0.05)  # Width of the bins for RDF
     structures: list[str] = zntrack.params()
@@ -193,4 +193,4 @@ class RadialDistributionFunction(zntrack.Node):
             rdfs[(struct_a, struct_b)].append(g_r)
 
         self.figures.mkdir(exist_ok=True, parents=True)
-        plot_rdf(rdfs, self.figures / "rdf.png")
+        plot_rdf(rdfs, self.figures / "rdf.png", bayesian=False)
