@@ -60,14 +60,13 @@ def compute_rdf(
 
         return dists
 
-    def rdf_single_frame(pos_a, pos_b, frame_cell):
-        exclude_self = jnp.all(pos_a == pos_b)  # works if same object (intra-group)
-        dists = mic_distances(pos_a, pos_b, frame_cell).flatten()
+    def rdf_single_frame(pos_a, pos_b, frame_cell, exclude_self):
+        dists = mic_distances(pos_a, pos_b, frame_cell, exclude_self=exclude_self).flatten()
         hist = jnp.histogram(dists, bins=bin_edges)[0]
         return hist
 
     # Batch RDF evaluation over all frames
-    histograms = vmap(rdf_single_frame)(positions_a, positions_b, cell)
+    histograms = vmap(rdf_single_frame, in_axes=(0, 0, 0, None))(positions_a, positions_b, cell, exclude_self)
     hist_sum = jnp.sum(histograms, axis=0)
 
     # Normalize RDF
@@ -168,7 +167,7 @@ class RadialDistributionFunction(zntrack.Node):
                 cell=cells,
                 bin_edges=bin_edges,
                 batch_size=self.batch_size,
-                exclude_self=True,  # Exclude self-distances for intra-group RDF
+                exclude_self=(struct_a == struct_b),  # Exclude self-distances for intra-group RDF
             )  # shape (n_bins,)
 
             self.results[(struct_a, struct_b)].append(g_r)
