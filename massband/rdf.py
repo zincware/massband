@@ -10,7 +10,7 @@ import znh5md
 import zntrack
 from jax import vmap
 
-from massband.rdf_fit import plot_rdf
+from massband.rdf_plot import plot_rdf
 from massband.utils import unwrap_positions, wrap_positions
 
 log = logging.getLogger(__name__)
