@@ -8,7 +8,7 @@ import zntrack
 from ase.data import atomic_numbers
 from jax import vmap
 
-from massband.com import center_of_mass
+from massband.com import center_of_mass_trajectories
 from massband.rdf_plot import plot_rdf
 from massband.utils import wrap_positions
 
@@ -98,7 +98,7 @@ class RadialDistributionFunction(zntrack.Node):
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
     def run(self):
-        com_positions, cells = center_of_mass(
+        com_positions, cells = center_of_mass_trajectories(
             file=self.file, structures=self.structures, wrap=True
         )
 

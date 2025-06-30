@@ -11,64 +11,55 @@ import znh5md
 from massband.utils import unwrap_positions, wrap_positions
 
 log = logging.getLogger(__name__)
-
-
-def center_of_mass(
-    file: Path | str, structures: list[str] | None = None, wrap: bool = False
-) -> Tuple[dict[str, jnp.ndarray], jnp.ndarray]:
-    # TODO: need to ensure that in the first frame, all molecules are fully unwrapped!!
+def load_unwrapped_frames(file: Path | str) -> Tuple[list[ase.Atoms], jnp.ndarray, jnp.ndarray]:
+    """Load ASE frames from H5MD and unwrap their positions."""
     io = znh5md.IO(file, variable_shape=False, include=["position", "box"])
     frames: list[ase.Atoms] = io[:]
-
     log.info(f"Loaded {len(frames)} frames from {file}")
     positions = jnp.stack([atoms.positions for atoms in frames])
     cells = jnp.stack([atoms.cell[:] for atoms in frames])
-    masses = jnp.array(frames[0].get_masses())
     inv_cells = jnp.linalg.inv(cells)
-    log.info(f"Positions shape: {positions.shape}, Cells shape: {cells.shape}")
     positions = unwrap_positions(positions, cells, inv_cells)
-    log.info(f"Unwrapped positions shape: {positions.shape}")
+    return frames, positions, cells
 
-    # TODO: all of this could also go to utils? E.g. a get_center_of_mass positions function
+def identify_substructures(
+    frame: ase.Atoms, structures: list[str] | None = None
+) -> dict[str, list[tuple[int, ...]]]:
+    """Return atom index groups by substructure SMILES or element symbol."""
     substructures = defaultdict(list)
-    # a dict of list[tuple[int, ...]]
-    if structures is not None:
-        log.info(f"Searching for substructures in {len(structures)} patterns")
+    if structures:
         for structure in structures:
             indices = rdkit2ase.match_substructure(
-                frames[0],
-                smiles=structure,
-                suggestions=structures,
+                frame, smiles=structure, suggestions=structures
             )
             if indices:
                 substructures[structure].extend(indices)
                 log.info(f"Found {len(indices)} matches for {structure}")
-
     else:
-        for element in set(frames[0].get_chemical_symbols()):
-            symbols = frames[0].get_chemical_symbols()
+        symbols = frame.get_chemical_symbols()
+        for element in set(symbols):
             indices = jnp.array([i for i, sym in enumerate(symbols) if sym == element])
             if indices.size > 0:
-                substructures[element].append(tuple(indices))
+                substructures[element].extend((i,) for i in indices)
                 log.info(f"Found {len(indices)} matches for element {element}")
+    return substructures
 
+def compute_com_trajectories(
+    positions: jnp.ndarray,
+    masses: jnp.ndarray,
+    substructures: dict[str, list[tuple[int, ...]]],
+    cells: jnp.ndarray,
+    wrap: bool = False,
+) -> dict[str, jnp.ndarray]:
+    """Compute center of mass trajectories per substructure."""
     com_positions = defaultdict(list)
-
     for structure, all_indices in substructures.items():
-        log.info(f"Computing COM positions for {structure}")
-
         for mol_indices in all_indices:
-            mol_masses = jnp.array([masses[i] for i in mol_indices])  # (n_atoms_in_mol,)
-            mol_positions = positions[:, mol_indices]  # (n_frames, n_atoms_in_mol, 3)
-
-            # Compute COM for each frame: weighted sum over atoms
-            # Numerator: sum_i(m_i * r_i), Denominator: sum_i(m_i)
+            mol_masses = jnp.array([masses[i] for i in mol_indices])
+            mol_positions = positions[:, mol_indices]
             mass_sum = jnp.sum(mol_masses)
-            weighted_positions = (
-                mol_positions * mol_masses[None, :, None]
-            )  # broadcast to (n_frames, n_atoms, 3)
-            com = jnp.sum(weighted_positions, axis=1) / mass_sum  # (n_frames, 3)
-
+            weighted_positions = mol_positions * mol_masses[None, :, None]
+            com = jnp.sum(weighted_positions, axis=1) / mass_sum
             com_positions[structure].append(com)
 
     com_positions = {
@@ -80,6 +71,15 @@ def center_of_mass(
             structure: wrap_positions(coms, cells)
             for structure, coms in com_positions.items()
         }
-    log.info(f"Found COM positions: { {k: v.shape for k, v in com_positions.items()} }")
+    return com_positions
 
+def center_of_mass_trajectories(
+    file: Path | str, structures: list[str] | None = None, wrap: bool = False
+) -> Tuple[dict[str, jnp.ndarray], jnp.ndarray]:
+    """Compute center of mass trajectories from an H5MD file."""
+    frames, positions, cells = load_unwrapped_frames(file)
+    masses = jnp.array(frames[0].get_masses())
+    substructures = identify_substructures(frames[0], structures)
+    com_positions = compute_com_trajectories(positions, masses, substructures, cells, wrap=wrap)
+    log.info(f"Found COM positions: { {k: v.shape for k, v in com_positions.items()} }")
     return com_positions, cells
