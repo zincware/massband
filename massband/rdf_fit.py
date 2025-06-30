@@ -486,7 +486,7 @@ def plot_rdf(
     save_path: Path,
     bin_width: float = 0.1,
     smoothing_sigma: float = 2.0,
-    bayesian: bool = True, # use MCMC fitting to get a better estimate of the peak
+    bayesian: bool = True,  # use MCMC fitting to get a better estimate of the peak
     fit_method: Literal[
         "gaussian",
         "skewed_gaussian",
@@ -602,7 +602,6 @@ def plot_rdf(
         ax.grid(
             True, which="minor", linestyle=":", linewidth=0.5, alpha=0.3
         )  # Lighter minor grid
-
 
     for ax in axes[len(rdfs) :]:
         ax.set_visible(False)
