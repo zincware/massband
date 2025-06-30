@@ -6,8 +6,6 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import curve_fit
 from scipy.special import erf, erfc
-from scipy.stats import norm
-from uravu.distribution import Distribution
 from uravu.relationship import Relationship
 
 log = logging.getLogger(__name__)
@@ -218,10 +216,6 @@ def bayesian_fit_uravu(
     """Perform Bayesian fitting using uravu."""
     result = BayesianFitResult()
     try:
-        # Create distribution objects for each data point (assume 10% error)
-        y_distributions = [
-            Distribution(norm.rvs(loc=y, scale=0.1 * y, size=1000)) for y in g_r
-        ]
         modeller = Relationship(
             fit_func,
             r,

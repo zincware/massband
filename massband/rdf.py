@@ -95,8 +95,6 @@ def compute_rdf(
         RDF values, shape (n_bins,)
     """
     n_frames = positions_a.shape[0]
-    n_bins = len(bin_edges) - 1
-    bin_width = bin_edges[1] - bin_edges[0]
 
     def mic_distances(frame_a, frame_b, frame_cell, exclude_self=True):
         inv_cell = jnp.linalg.inv(frame_cell.T)
@@ -130,8 +128,6 @@ def compute_rdf(
 
     # Normalize RDF
     volume = jnp.linalg.det(cell)
-    r_lower = bin_edges[:-1]
-    r_upper = bin_edges[1:]
     min_box_length = jnp.min(jnp.linalg.norm(cell, axis=-1))  # across frames
     shell_volume = _ideal_gas_correction(bin_edges, L=min_box_length)
 
@@ -170,7 +166,6 @@ class RadialDistributionFunction(zntrack.Node):
         bin_edges = jnp.arange(
             0.0, 10.0 + self.bin_width, self.bin_width
         )  # You can customize max range
-        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
 
         def is_element(name):
             return name in atomic_numbers

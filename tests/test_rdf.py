@@ -64,6 +64,6 @@ def test_rdf_hh_goes_to_one(tmp_path):
         structures=None,
     )
     node.run()
-    hh_rdf = np.array(node.results[("H", "H")])
+    hh_rdf = np.array(node.results["H|H"])
     # Check the average of the last 20 bins
     assert np.isclose(np.mean(hh_rdf[-20:]), 1.0, atol=0.1)
