@@ -473,8 +473,10 @@ def fit_first_peak(
                 }
             )
 
+    except ValueError as e:
+        log.warning(f"Peak finding failed: {e}")
     except Exception as e:
-        raise e
+        log.error(f"An unexpected error occurred during fitting: {e}")
 
     return result
 
@@ -506,11 +508,11 @@ def plot_rdf(
     axes = axes.flatten()
 
     for ax, ((label_a, label_b), g_r_list) in zip(axes, rdfs.items()):
-        try:
-            g_r_array = np.stack(g_r_list)
-            g_r_mean = np.mean(g_r_array, axis=0)
-            r = 0.5 * (np.arange(len(g_r_mean)) + 0.5) * bin_width
+        g_r_array = np.stack(g_r_list)
+        g_r_mean = np.mean(g_r_array, axis=0)
+        r = 0.5 * (np.arange(len(g_r_mean)) + 0.5) * bin_width
 
+        try:
             peak_fit = fit_first_peak(
                 r,
                 g_r_mean,
@@ -522,47 +524,50 @@ def plot_rdf(
                 ci=ci,
                 n_samples=n_samples,
             )
+        except Exception as e:
+            print(f"Error fitting RDF for {label_a} - {label_b}: {e}")
+            peak_fit = None
 
-            ax.plot(r, g_r_mean, label="RDF (raw)", alpha=0.5)
-            # ax.plot(r, peak_fit["smoothed_rdf"], "--", label="RDF (smoothed)")
+        ax.plot(r, g_r_mean, label="RDF (raw)", alpha=0.5)
+        # ax.plot(r, peak_fit["smoothed_rdf"], "--", label="RDF (smoothed)")
 
-            # Highlighted changes start here - adding fit window visualization
-            if fit_method != "none" and peak_fit["success"]:
-                # Get the fit window indices from the peak fitting function
-                # i_min, i_max = find_peak_window(r, peak_fit["smoothed_rdf"], min_threshold, window_scale)
-                i_min, i_max = find_peak_window_by_gradient(
-                    r, peak_fit["smoothed_rdf"], min_threshold
+        # Highlighted changes start here - adding fit window visualization
+        if peak_fit is not None and fit_method != "none" and peak_fit["success"]:
+            # Get the fit window indices from the peak fitting function
+            # i_min, i_max = find_peak_window(r, peak_fit["smoothed_rdf"], min_threshold, window_scale)
+            i_min, i_max = find_peak_window_by_gradient(
+                r, peak_fit["smoothed_rdf"], min_threshold
+            )
+
+            # plot vertical span for the fit window
+            # ax.axvspan(r[i_min], r[i_max-1], color='cyan', alpha=0.1, label='Fit window')
+
+            ax.plot(
+                r[i_min:i_max],
+                peak_fit["fit_curve"][i_min:i_max],
+                color="black",
+                label=f"{fit_method} fit",
+            )
+
+            # Plot confidence interval
+            if bayesian:
+                ax.fill_between(
+                    r,
+                    peak_fit["lower_ci"],
+                    peak_fit["upper_ci"],
+                    color="gray",
+                    alpha=0.3,
+                    label=f"{int(ci * 100)}% CI",
                 )
-
-                # plot vertical span for the fit window
-                # ax.axvspan(r[i_min], r[i_max-1], color='cyan', alpha=0.1, label='Fit window')
-
+            else:
+                ax.plot(r, peak_fit["lower_ci"], "k--", alpha=0.3)
                 ax.plot(
-                    r[i_min:i_max],
-                    peak_fit["fit_curve"][i_min:i_max],
-                    color="black",
-                    label=f"{fit_method} fit",
+                    r,
+                    peak_fit["upper_ci"],
+                    "k--",
+                    alpha=0.3,
+                    label=f"{int(ci * 100)}% CI",
                 )
-
-                # Plot confidence interval
-                if bayesian:
-                    ax.fill_between(
-                        r,
-                        peak_fit["lower_ci"],
-                        peak_fit["upper_ci"],
-                        color="gray",
-                        alpha=0.3,
-                        label=f"{int(ci * 100)}% CI",
-                    )
-                else:
-                    ax.plot(r, peak_fit["lower_ci"], "k--", alpha=0.3)
-                    ax.plot(
-                        r,
-                        peak_fit["upper_ci"],
-                        "k--",
-                        alpha=0.3,
-                        label=f"{int(ci * 100)}% CI",
-                    )
 
             ax.axvline(
                 peak_fit["r_peak"],
@@ -575,31 +580,29 @@ def plot_rdf(
                 peak_fit["r_peak"] - peak_fit["r_peak_uncertainty"],
                 peak_fit["r_peak"] + peak_fit["r_peak_uncertainty"],
             )
-            ax.axvspan(
-                peak_region[0],
-                peak_region[1],
-                color="red",
-                alpha=0.1,
-                label="Peak region",
-            )
+        ax.axvspan(
+            peak_region[0],
+            peak_region[1],
+            color="red",
+            alpha=0.1,
+            label="Peak region",
+        )
 
-            ax.set_xlabel("Distance r (Å)")
-            ax.set_ylabel("g(r)")
-            ax.set_title(f"RDF: {label_a} - {label_b}")
-            ax.legend(loc="lower left", fontsize="small")
-            # Set minor ticks every 0.1 units on x-axis
-            ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.1))
+        ax.set_xlabel("Distance r (Å)")
+        ax.set_ylabel("g(r)")
+        ax.set_title(f"RDF: {label_a} - {label_b}")
+        ax.legend(loc="lower left", fontsize="small")
+        # Set minor ticks every 0.1 units on x-axis
+        ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.1))
 
-            # Optional: set minor ticks on y-axis too (e.g. every 0.1)
-            ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.1))
+        # Optional: set minor ticks on y-axis too (e.g. every 0.1)
+        ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.1))
 
-            ax.grid(True)
-            ax.grid(
-                True, which="minor", linestyle=":", linewidth=0.5, alpha=0.3
-            )  # Lighter minor grid
+        ax.grid(True)
+        ax.grid(
+            True, which="minor", linestyle=":", linewidth=0.5, alpha=0.3
+        )  # Lighter minor grid
 
-        except Exception as e:
-            raise e
 
     for ax in axes[len(rdfs) :]:
         ax.set_visible(False)
