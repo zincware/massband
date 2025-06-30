@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 
 def plot_rdf(
-    rdfs: DefaultDict[Tuple[str, str], list],
+    rdfs: DefaultDict[Tuple[str, str], list[float]],
     save_path: Path,
     bin_width: float = 0.1,
     smoothing_sigma: float = 2.0,
@@ -31,15 +31,13 @@ def plot_rdf(
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 5 * n_rows), squeeze=False)
     axes = axes.flatten()
 
-    for ax, ((label_a, label_b), g_r_list) in zip(axes, rdfs.items()):
-        g_r_array = np.stack(g_r_list)
-        g_r_mean = np.mean(g_r_array, axis=0)
-        r = 0.5 * (np.arange(len(g_r_mean)) + 0.5) * bin_width
+    for ax, ((label_a, label_b), g_r) in zip(axes, rdfs.items()):
+        r = 0.5 * (np.arange(len(g_r)) + 0.5) * bin_width
 
         try:
             peak_fit: PeakFitResult = fit_first_peak(
                 r,
-                g_r_mean,
+                g_r,
                 fit_method=fit_method,
                 bayesian=bayesian,
                 smoothing_sigma=smoothing_sigma,
@@ -52,7 +50,7 @@ def plot_rdf(
             log.error(f"Error fitting RDF for {label_a} - {label_b}: {e}")
             continue
 
-        ax.plot(r, g_r_mean, label="RDF (raw)", alpha=0.5)
+        ax.plot(r, g_r, label="RDF (raw)", alpha=0.5)
 
         # Visualize the fit window
         try:

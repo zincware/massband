@@ -92,6 +92,8 @@ class RadialDistributionFunction(zntrack.Node):
     bin_width: float = zntrack.params(0.05)  # Width of the bins for RDF
     structures: list[str] = zntrack.params()
 
+    results: dict[tuple[str, str], list[float]] = zntrack.outs()
+
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
     def run(self):
@@ -101,7 +103,7 @@ class RadialDistributionFunction(zntrack.Node):
 
         # now wrap the compute the rdfs and wrap the positions
 
-        rdfs = defaultdict(list)
+        self.results = defaultdict(list)
         bin_edges = jnp.arange(
             0.0, 10.0 + self.bin_width, self.bin_width
         )  # You can customize max range
@@ -130,7 +132,10 @@ class RadialDistributionFunction(zntrack.Node):
                 exclude_self=True,  # Exclude self-distances for intra-group RDF
             )  # shape (n_bins,)
 
-            rdfs[(struct_a, struct_b)].append(g_r)
+            self.results[(struct_a, struct_b)].append(g_r)
 
+        self.results = {
+            k: jnp.array(v).mean(axis=0).tolist() for k, v in self.results.items()
+        }
         self.figures.mkdir(exist_ok=True, parents=True)
-        plot_rdf(rdfs, self.figures / "rdf.png", bayesian=False)
+        plot_rdf(self.results, self.figures / "rdf.png", bayesian=False)

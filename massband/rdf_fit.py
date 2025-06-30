@@ -253,7 +253,7 @@ def bayesian_fit_uravu(
 
 def fit_first_peak(
     r: np.ndarray,
-    g_r: np.ndarray,
+    g_r: list[float],
     fit_method: str,
     bayesian: bool = False,
     smoothing_sigma: float = 2.0,
