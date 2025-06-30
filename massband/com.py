@@ -69,7 +69,7 @@ def compute_com_trajectories(
             com_positions[structure].append(com)
 
     com_positions = {
-        structure: jnp.transpose(jnp.stack(coms), (1, 0, 2))
+        structure: jnp.stack(coms, axis=1)
         for structure, coms in com_positions.items()
     }
     if wrap:
