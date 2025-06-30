@@ -32,7 +32,7 @@ def center_of_mass(
     # TODO: all of this could also go to utils? E.g. a get_center_of_mass positions function
     substructures = defaultdict(list)
     # a dict of list[tuple[int, ...]]
-    if structures:
+    if structures is not None:
         log.info(f"Searching for substructures in {len(structures)} patterns")
         for structure in structures:
             indices = rdkit2ase.match_substructure(
@@ -44,7 +44,14 @@ def center_of_mass(
                 substructures[structure].extend(indices)
                 log.info(f"Found {len(indices)} matches for {structure}")
 
-    # TODO: move to utils
+    else:
+        for element in set(frames[0].get_chemical_symbols()):
+            symbols = frames[0].get_chemical_symbols()
+            indices = jnp.array([i for i, sym in enumerate(symbols) if sym == element])
+            if indices.size > 0:
+                substructures[element].append(tuple(indices))
+                log.info(f"Found {len(indices)} matches for element {element}")
+
     com_positions = defaultdict(list)
 
     for structure, all_indices in substructures.items():

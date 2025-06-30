@@ -24,7 +24,7 @@ def wrapped_trajectory():
 
 def test_unwrap_positions(wrapped_trajectory):
     positions, cell, inv_cell = wrapped_trajectory
-    
+
     # Unwrap the positions
     unwrapped_positions = unwrap_positions(positions, cell, inv_cell)
 

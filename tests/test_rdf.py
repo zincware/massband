@@ -20,3 +20,34 @@ def test_rdf_node_smiles(tmp_path):
     assert len(node.results) == 3
 
     assert (node.figures / "rdf.png").exists()
+
+
+def test_rdf_node_full(tmp_path):
+    os.chdir(tmp_path)
+    node = RadialDistributionFunction(
+        file=BMIM_BF4_FILE,
+        batch_size=5,
+        structures=None,
+    )
+    node.run()
+    assert len(node.results[("H", "H")]) == 200
+    assert len(node.results[("H", "B")]) == 200
+    assert len(node.results[("H", "C")]) == 200
+    assert len(node.results[("H", "N")]) == 200
+    assert len(node.results[("H", "F")]) == 200
+
+    assert len(node.results[("B", "B")]) == 200
+    assert len(node.results[("B", "C")]) == 200
+    assert len(node.results[("B", "N")]) == 200
+    assert len(node.results[("B", "F")]) == 200
+
+    assert len(node.results[("C", "C")]) == 200
+    assert len(node.results[("C", "N")]) == 200
+    assert len(node.results[("C", "F")]) == 200
+
+    assert len(node.results[("N", "N")]) == 200
+    assert len(node.results[("N", "F")]) == 200
+
+    assert len(node.results[("F", "F")]) == 200
+
+    assert len(node.results) == 15

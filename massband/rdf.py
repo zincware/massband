@@ -5,6 +5,7 @@ from pathlib import Path
 
 import jax.numpy as jnp
 import zntrack
+from ase.data import atomic_numbers
 from jax import vmap
 
 from massband.com import center_of_mass
@@ -90,7 +91,7 @@ class RadialDistributionFunction(zntrack.Node):
     file: str | Path = zntrack.deps_path()
     batch_size: int = zntrack.params()  # You can set a default or make it configurable
     bin_width: float = zntrack.params(0.05)  # Width of the bins for RDF
-    structures: list[str] = zntrack.params()
+    structures: list[str] | None = zntrack.params()
 
     results: dict[tuple[str, str], list[float]] = zntrack.outs()
 
@@ -109,9 +110,47 @@ class RadialDistributionFunction(zntrack.Node):
         )  # You can customize max range
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
 
-        for struct_a, struct_b in itertools.combinations_with_replacement(
-            com_positions.keys(), 2
-        ):
+        def is_element(name):
+            return name in atomic_numbers
+
+        def sort_key(pair):
+            a, b = pair
+            a_is_elem = is_element(a)
+            b_is_elem = is_element(b)
+            if a_is_elem and b_is_elem:
+                # Both elements: sort by atomic number
+                return (
+                    0,
+                    min(atomic_numbers[a], atomic_numbers[b]),
+                    max(atomic_numbers[a], atomic_numbers[b]),
+                )
+            elif a_is_elem:
+                # a is element, b is not
+                return (1, atomic_numbers[a], b)
+            elif b_is_elem:
+                # b is element, a is not
+                return (1, atomic_numbers[b], a)
+            else:
+                # Neither is element: sort alphabetically
+                return (2, min(a, b), max(a, b))
+
+        pairs = list(itertools.combinations_with_replacement(com_positions.keys(), 2))
+        pairs = [
+            tuple(
+                sorted(
+                    pair,
+                    key=lambda x: (
+                        not is_element(x),
+                        atomic_numbers.get(x, float("inf")),
+                        x,
+                    ),
+                )
+            )
+            for pair in pairs
+        ]
+        pairs = sorted(set(pairs), key=sort_key)
+
+        for struct_a, struct_b in pairs:
             pos_a = com_positions[struct_a]
             pos_b = com_positions[struct_b]
 
