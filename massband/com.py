@@ -11,7 +11,11 @@ import znh5md
 from massband.utils import unwrap_positions, wrap_positions
 
 log = logging.getLogger(__name__)
-def load_unwrapped_frames(file: Path | str) -> Tuple[list[ase.Atoms], jnp.ndarray, jnp.ndarray]:
+
+
+def load_unwrapped_frames(
+    file: Path | str,
+) -> Tuple[list[ase.Atoms], jnp.ndarray, jnp.ndarray]:
     """Load ASE frames from H5MD and unwrap their positions."""
     io = znh5md.IO(file, variable_shape=False, include=["position", "box"])
     frames: list[ase.Atoms] = io[:]
@@ -21,6 +25,7 @@ def load_unwrapped_frames(file: Path | str) -> Tuple[list[ase.Atoms], jnp.ndarra
     inv_cells = jnp.linalg.inv(cells)
     positions = unwrap_positions(positions, cells, inv_cells)
     return frames, positions, cells
+
 
 def identify_substructures(
     frame: ase.Atoms, structures: list[str] | None = None
@@ -43,6 +48,7 @@ def identify_substructures(
                 substructures[element].extend((i,) for i in indices)
                 log.info(f"Found {len(indices)} matches for element {element}")
     return substructures
+
 
 def compute_com_trajectories(
     positions: jnp.ndarray,
@@ -73,6 +79,7 @@ def compute_com_trajectories(
         }
     return com_positions
 
+
 def center_of_mass_trajectories(
     file: Path | str, structures: list[str] | None = None, wrap: bool = False
 ) -> Tuple[dict[str, jnp.ndarray], jnp.ndarray]:
@@ -80,6 +87,8 @@ def center_of_mass_trajectories(
     frames, positions, cells = load_unwrapped_frames(file)
     masses = jnp.array(frames[0].get_masses())
     substructures = identify_substructures(frames[0], structures)
-    com_positions = compute_com_trajectories(positions, masses, substructures, cells, wrap=wrap)
+    com_positions = compute_com_trajectories(
+        positions, masses, substructures, cells, wrap=wrap
+    )
     log.info(f"Found COM positions: { {k: v.shape for k, v in com_positions.items()} }")
     return com_positions, cells

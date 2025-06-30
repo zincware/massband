@@ -9,10 +9,65 @@ from ase.data import atomic_numbers
 from jax import vmap
 
 from massband.com import center_of_mass_trajectories
+from massband.rdf_fit import FIT_METHODS
 from massband.rdf_plot import plot_rdf
 from massband.utils import wrap_positions
 
 log = logging.getLogger(__name__)
+
+
+def _ideal_gas_correction(bin_edges: jnp.ndarray, L: float) -> jnp.ndarray:
+    """
+    Compute corrected shell volumes for RDF normalization due to finite box size.
+
+    Parameters
+    ----------
+    bin_edges : jnp.ndarray
+        Bin edges for RDF, shape (n_bins + 1,)
+    L : float
+        Box length (assumed cubic for correction model)
+
+    Returns
+    -------
+    shell_volumes : jnp.ndarray
+        Corrected shell volumes for each bin, shape (n_bins,)
+    """
+    r_lower = bin_edges[:-1]
+    r_upper = bin_edges[1:]
+    r = 0.5 * (r_lower + r_upper)
+    dr = r_upper - r_lower
+    r_scaled = r / L
+
+    def spherical(r):
+        return 4 * jnp.pi * r**2
+
+    def correction1(r_scaled):
+        return 2 * jnp.pi * r_scaled * (3 - 4 * r_scaled) * L**2
+
+    def correction2(r_scaled):
+        sqrt_term = jnp.sqrt(4 * r_scaled**2 - 2)
+        arctan_1 = jnp.arctan(sqrt_term)
+        arctan_2 = (
+            8
+            * r_scaled
+            * jnp.arctan(
+                (2 * r_scaled * (4 * r_scaled**2 - 3))
+                / (sqrt_term * (4 * r_scaled**2 + 1))
+            )
+        )
+        return 2 * r_scaled * (3 * jnp.pi - 12 * arctan_1 + arctan_2) * L**2
+
+    shell_area = jnp.where(
+        r_scaled <= 0.5,
+        spherical(r),
+        jnp.where(
+            r_scaled <= jnp.sqrt(2) / 2,
+            correction1(r_scaled),
+            correction2(r_scaled),
+        ),
+    )
+
+    return shell_area * dr
 
 
 def compute_rdf(
@@ -61,19 +116,24 @@ def compute_rdf(
         return dists
 
     def rdf_single_frame(pos_a, pos_b, frame_cell, exclude_self):
-        dists = mic_distances(pos_a, pos_b, frame_cell, exclude_self=exclude_self).flatten()
+        dists = mic_distances(
+            pos_a, pos_b, frame_cell, exclude_self=exclude_self
+        ).flatten()
         hist = jnp.histogram(dists, bins=bin_edges)[0]
         return hist
 
     # Batch RDF evaluation over all frames
-    histograms = vmap(rdf_single_frame, in_axes=(0, 0, 0, None))(positions_a, positions_b, cell, exclude_self)
+    histograms = vmap(rdf_single_frame, in_axes=(0, 0, 0, None))(
+        positions_a, positions_b, cell, exclude_self
+    )
     hist_sum = jnp.sum(histograms, axis=0)
 
     # Normalize RDF
     volume = jnp.linalg.det(cell)
     r_lower = bin_edges[:-1]
     r_upper = bin_edges[1:]
-    shell_volume = (4 / 3) * jnp.pi * (r_upper**3 - r_lower**3)  # Shell volume per bin
+    min_box_length = jnp.min(jnp.linalg.norm(cell, axis=-1))  # across frames
+    shell_volume = _ideal_gas_correction(bin_edges, L=min_box_length)
 
     number_density = positions_b.shape[1] / jnp.mean(volume)  # mean number density
     norm_factor = positions_a.shape[1] * number_density * shell_volume * n_frames
@@ -92,7 +152,10 @@ class RadialDistributionFunction(zntrack.Node):
     bin_width: float = zntrack.params(0.05)  # Width of the bins for RDF
     structures: list[str] | None = zntrack.params()
 
-    results: dict[tuple[str, str], list[float]] = zntrack.outs()
+    bayesian: bool = zntrack.params(False)  # Whether to use Bayesian fitting
+    fit_method: FIT_METHODS = zntrack.params("gaussian")  # Method for fitting the
+
+    results: dict[str, list[float]] = zntrack.outs()
 
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
@@ -167,13 +230,20 @@ class RadialDistributionFunction(zntrack.Node):
                 cell=cells,
                 bin_edges=bin_edges,
                 batch_size=self.batch_size,
-                exclude_self=(struct_a == struct_b),  # Exclude self-distances for intra-group RDF
+                exclude_self=(
+                    struct_a == struct_b
+                ),  # Exclude self-distances for intra-group RDF
             )  # shape (n_bins,)
 
             self.results[(struct_a, struct_b)].append(g_r)
 
-        self.results = {
-            k: jnp.array(v).mean(axis=0).tolist() for k, v in self.results.items()
-        }
+        self.results = {k: jnp.array(v).mean(axis=0) for k, v in self.results.items()}
         self.figures.mkdir(exist_ok=True, parents=True)
-        plot_rdf(self.results, self.figures / "rdf.png", bayesian=False)
+        plot_rdf(
+            self.results,
+            self.figures / "rdf.png",
+            bayesian=self.bayesian,
+            fit_method=self.fit_method,
+        )
+
+        self.results = {"|".join(k): v.tolist() for k, v in self.results.items()}

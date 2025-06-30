@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 
 def plot_rdf(
-    rdfs: DefaultDict[Tuple[str, str], list[float]],
+    rdfs: DefaultDict[Tuple[str, str], np.ndarray],
     save_path: Path,
     bin_width: float = 0.1,
     smoothing_sigma: float = 2.0,

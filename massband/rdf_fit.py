@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Tuple
+from typing import Callable, Literal, Optional, Tuple
 
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
@@ -11,6 +11,15 @@ from uravu.distribution import Distribution
 from uravu.relationship import Relationship
 
 log = logging.getLogger(__name__)
+
+FIT_METHODS = Literal[
+    "none",
+    "gaussian",
+    "skewed_gaussian",
+    "emg",
+    "generalized_gaussian",
+    "skewed_generalized_gaussian",
+]
 
 
 def gaussian(x: np.ndarray, amp: float, mu: float, sigma: float) -> np.ndarray:
@@ -253,7 +262,7 @@ def bayesian_fit_uravu(
 
 def fit_first_peak(
     r: np.ndarray,
-    g_r: list[float],
+    g_r: np.ndarray,
     fit_method: str,
     bayesian: bool = False,
     smoothing_sigma: float = 2.0,
