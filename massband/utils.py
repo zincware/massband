@@ -55,6 +55,7 @@ def wrap_positions(pos: jnp.ndarray, cells: jnp.ndarray) -> jnp.ndarray:
     jnp.ndarray
         Wrapped positions in Cartesian coordinates, shape (n_frames, n_atoms, 3)
     """
+    # raise ValueError(pos.shape, cells.shape)
     # Convert to fractional: frac = pos @ inv(cell)
     inv_cells = jnp.linalg.inv(cells)
     frac = jnp.einsum("fij,faj->fai", inv_cells, pos)  # (n_frames, n_atoms, 3)
