@@ -8,12 +8,14 @@ from typing import Optional, Union
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
+import plotly.graph_objects as go
 import rdkit2ase
 import zntrack
 from ase import Atoms
 from kinisi.analyze import DiffusionAnalyzer
 from znh5md import IO
 
+from massband.abc import ComparisonResults
 from massband.utils import unwrap_positions
 
 log = logging.getLogger(__name__)
@@ -215,3 +217,80 @@ class KinisiSelfDiffusion(zntrack.Node):
 
             fig.savefig(self.data_path / f"{data.structure}_hist.png", dpi=300)
             plt.close(fig)
+
+    @classmethod
+    def compare(cls, *nodes: "KinisiSelfDiffusion") -> ComparisonResults:
+        """
+        Compare diffusion results from multiple runs.
+
+        This method generates two types of plots for each common structure found
+        across the provided nodes:
+        1.  An overlay of the Mean Squared Displacement (MSD) curves.
+        2.  An overlay of the diffusion coefficient histograms.
+        """
+        figures = {}
+        # Find common structures across all nodes by looking at the keys of the results dict.
+        all_structures = [set(node.results.keys()) for node in nodes if node.results]
+        if not all_structures:
+            return {"frames": [], "figures": {}}
+
+        common_structures = set.intersection(*all_structures)
+
+        for structure in common_structures:
+            # --- MSD Comparison Plot ---
+            msd_fig = go.Figure()
+            # --- Histogram Comparison Plot ---
+            hist_fig = go.Figure()
+
+            for node in nodes:
+                # Check if the node has data for the current structure
+                if not node.results or structure not in node.results:
+                    continue
+
+                # Load the pickled data for this node and structure
+                data_file = node.data_path / f"{structure}.pkl"
+                if not data_file.exists():
+                    continue
+                with open(data_file, "rb") as f:
+                    data: DiffusionPlotData = pickle.load(f)
+
+                # Add MSD trace to the MSD comparison plot
+                msd_fig.add_trace(
+                    go.Scatter(
+                        x=data.dt,
+                        y=data.msd,
+                        mode="lines",
+                        name=f"{node.name}",
+                    )
+                )
+
+                # Add histogram trace to the histogram comparison plot
+                hist_fig.add_trace(
+                    go.Histogram(
+                        x=data.D_samples,
+                        name=f"{node.name}",
+                        opacity=0.7,
+                    )
+                )
+
+            # Style the MSD plot
+            msd_fig.update_layout(
+                title_text=f"MSD Comparison for: {structure}",
+                xaxis_title_text=r"$\Delta t$/ps",
+                yaxis_title_text="MSD/Å²",
+                legend_title_text="Compared Runs",
+            )
+            figures[f"msd_comparison_{structure}"] = msd_fig
+
+            # Style the histogram plot
+            hist_fig.update_layout(
+                barmode="overlay",
+                title_text=f"Diffusion Coefficient Comparison for: {structure}",
+                xaxis_title_text="$D$/cm²s⁻¹",
+                yaxis_title_text="Count",
+                legend_title_text="Compared Runs",
+            )
+            hist_fig.update_traces(opacity=0.6)
+            figures[f"hist_comparison_{structure}"] = hist_fig
+
+        return {"frames": [], "figures": figures}

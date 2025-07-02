@@ -4,10 +4,12 @@ from collections import defaultdict
 from pathlib import Path
 
 import jax.numpy as jnp
+import plotly.graph_objects as go
 import zntrack
 from ase.data import atomic_numbers
 from jax import vmap
 
+from massband.abc import ComparisonResults
 from massband.com import center_of_mass_trajectories
 from massband.rdf_fit import FIT_METHODS
 from massband.rdf_plot import plot_rdf
@@ -242,3 +244,57 @@ class RadialDistributionFunction(zntrack.Node):
         )
 
         self.results = {"|".join(k): v.tolist() for k, v in self.results.items()}
+
+    @classmethod
+    def compare(cls, *nodes: "RadialDistributionFunction") -> ComparisonResults:
+        """
+        Compare the Radial Distribution Functions from multiple runs by plotting
+        them on top of each other.
+        """
+        # 1. Find common RDF pairs across all nodes to be compared.
+        # The keys are strings like "struct_a|struct_b".
+        all_rdf_keys = [set(node.results.keys()) for node in nodes if node.results]
+        if not all_rdf_keys:
+            return {"frames": [], "figures": {}}  # Return empty if no data
+
+        common_keys = set.intersection(*all_rdf_keys)
+
+        figures = {}
+        # 2. For each common pair, create a comparison figure.
+        for key in common_keys:
+            fig = go.Figure()
+
+            # 3. Add a scatter trace to the figure for each node's RDF.
+            for node in nodes:
+                if not node.results or key not in node.results:
+                    continue
+
+                g_r = jnp.array(node.results[key])
+                # Recreate the r-values (bin centers) for the x-axis.
+                # This assumes bin_width and range are consistent across compared nodes.
+                bin_width = node.bin_width
+                num_bins = len(g_r)
+                r_values = jnp.arange(num_bins) * bin_width + bin_width / 2.0
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=r_values,
+                        y=g_r,
+                        mode="lines",
+                        name=node.name,  # zntrack provides a 'name' for each node
+                    )
+                )
+
+            # 4. Style the figure for clarity and aesthetics.
+            pair_name = key.replace("|", "-")
+            fig.update_layout(
+                title_text=f"RDF Comparison for: {pair_name}",
+                xaxis_title_text="r (Å)",
+                yaxis_title_text="g(r)",
+                legend_title_text="Compared Runs",
+            )
+
+            # 5. Add the generated figure to the results dictionary.
+            figures[f"rdf_comparison_{pair_name}"] = fig
+
+        return {"frames": [], "figures": figures}

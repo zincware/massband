@@ -5,9 +5,11 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
+import plotly.graph_objects as go
 import zntrack
 from tqdm import tqdm
 
+from massband.abc import ComparisonResults
 from massband.com import identify_substructures, load_unwrapped_frames
 from massband.diffusion.utils import compute_msd_fft
 
@@ -227,3 +229,68 @@ class RotationalSelfDiffusion(zntrack.Node):
                 ax.grid(True, linestyle="--", alpha=0.6)
                 fig.savefig(self.figures / f"{structure}_{angle_name}_msd.png", dpi=300)
                 plt.close(fig)
+
+    @classmethod
+    def compare(cls, *nodes: "RotationalSelfDiffusion") -> ComparisonResults:
+        """
+        Compare rotational self-diffusion results from multiple runs.
+
+        This method generates an overlay plot of the Mean Squared Angular
+        Displacement (MSAD) curves for each common structure and angle
+        (alpha, beta, gamma) found across the provided nodes.
+        """
+        figures = {}
+
+        # 1. Identify base keys (e.g., "structure_angle") for each node
+        all_base_keys = []
+        for node in nodes:
+            if not node.results:
+                continue
+            # Extract base keys by finding all '_msd' keys and removing the suffix
+            node_base_keys = {
+                key.replace("_msd", "") for key in node.results if key.endswith("_msd")
+            }
+            all_base_keys.append(node_base_keys)
+
+        if not all_base_keys:
+            return {"frames": [], "figures": {}}
+
+        # 2. Find the common base keys across all nodes
+        common_base_keys = set.intersection(*all_base_keys)
+
+        # 3. Create a comparison plot for each common base key
+        for base_key in common_base_keys:
+            fig = go.Figure()
+
+            for node in nodes:
+                # Check if this node has the data (it should, due to intersection)
+                msd_key = f"{base_key}_msd"
+                time_key = f"{base_key}_time"
+                if msd_key not in node.results or time_key not in node.results:
+                    continue
+
+                # Get the data
+                msd_curve = node.results[msd_key]
+                time_axis = node.results[time_key]
+
+                # Add trace to the plot
+                fig.add_trace(
+                    go.Scatter(
+                        x=time_axis,
+                        y=msd_curve,
+                        mode="lines",
+                        name=f"{node.name}",
+                    )
+                )
+
+            # 4. Style the plot
+            structure, angle_name = base_key.rsplit("_", 1)
+            fig.update_layout(
+                title_text=f"Rotational MSD Comparison: {structure} - {angle_name}",
+                xaxis_title_text="Time / ps",
+                yaxis_title_text="Mean Squared Angular Displacement / rad²",
+                legend_title_text="Compared Runs",
+            )
+            figures[f"rotational_msd_comparison_{base_key}"] = fig
+
+        return {"frames": [], "figures": figures}
