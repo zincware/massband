@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 import massband
+from massband.diffusion.diffusion import EinsteinSelfDiffusion
 
 BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
 
@@ -45,3 +46,72 @@ def test_KinisiSelfDiffusion(tmp_path):
     assert bf4_results["asymmetric_uncertainty"] == pytest.approx(
         [2.729e-07, 2.809e-07], rel=0.1
     )
+
+
+def test_EinsteinSelfDiffusion_atomic(tmp_path):
+    os.chdir(tmp_path)
+
+    diff = EinsteinSelfDiffusion(
+        file=BMIM_BF4_FILE,
+        sampling_rate=100,
+        timestep=0.5,  # fs
+        method="fft",
+        use_com=False,
+        structures=None,
+    )
+    diff.run()
+
+    # Check if results contain expected atomic symbols (e.g., 'C', 'H', 'N', 'B', 'F')
+    expected_symbols = ["C", "H", "N", "B", "F"]
+    for symbol in expected_symbols:
+        assert symbol in [data["symbol"] for data in diff.results.values()]
+
+    # Check if diffusion coefficients are reasonable (non-zero)
+    for Z, data in diff.results.items():
+        assert data["diffusion_coefficient"] > 0
+
+
+def test_EinsteinSelfDiffusion_com_species(tmp_path):
+    os.chdir(tmp_path)
+
+    diff = EinsteinSelfDiffusion(
+        file=BMIM_BF4_FILE,
+        sampling_rate=100,
+        timestep=0.5,  # fs
+        method="fft",
+        use_com=True,
+        structures=None,  # Should default to per-element COM
+    )
+    diff.run()
+
+    # Check if results contain expected atomic symbols (e.g., 'C', 'H', 'N', 'B', 'F')
+    expected_symbols = ["C", "H", "N", "B", "F"]
+    for symbol in expected_symbols:
+        assert symbol in [data["symbol"] for data in diff.results.values()]
+
+    # Check if diffusion coefficients are reasonable (non-zero)
+    for Z, data in diff.results.items():
+        assert data["diffusion_coefficient"] > 0
+
+
+def test_EinsteinSelfDiffusion_com_molecules(tmp_path):
+    os.chdir(tmp_path)
+
+    diff = EinsteinSelfDiffusion(
+        file=BMIM_BF4_FILE,
+        sampling_rate=100,
+        timestep=0.5,  # fs
+        method="fft",
+        use_com=True,
+        structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
+    )
+    diff.run()
+
+    # Check if results contain expected molecular SMILES
+    expected_smiles = ["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"]
+    for smiles in expected_smiles:
+        assert smiles in [data["symbol"] for data in diff.results.values()]
+
+    # Check if diffusion coefficients are reasonable (non-zero)
+    for Z, data in diff.results.items():
+        assert data["diffusion_coefficient"] > 0

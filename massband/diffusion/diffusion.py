@@ -7,13 +7,13 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import pint
-import rdkit2ase
 import znh5md
 import zntrack
 from ase.data import chemical_symbols
-from jax import jit, vmap
+from jax import jit
 from tqdm import tqdm
 
+from massband.com import center_of_mass_trajectories
 from massband.diffusion.utils import compute_msd_direct, compute_msd_fft
 from massband.utils import unwrap_positions
 
@@ -34,6 +34,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
     fit_window: Tuple[float, float] = zntrack.params((0.2, 0.8))
     method: Literal["direct", "fft"] = zntrack.params("fft")
     structures: list[str] | None = zntrack.params(None)
+    use_com: bool = zntrack.params(False)
     # TODO: allow not smiles but just the sum formula, e.g. "C6H12O6" for glucose
 
     def get_cells(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -44,110 +45,16 @@ class EinsteinSelfDiffusion(zntrack.Node):
         inv_cells = jnp.linalg.inv(cells)
         return cells, inv_cells
 
-    def get_atomic_numbers(self) -> List[int]:
-        """Get atomic numbers from the trajectory."""
+    def get_positions(self) -> jnp.ndarray:
+        """Load unwrapped positions."""
+        log.info("Loading all positions")
         io = znh5md.IO(self.file, variable_shape=False, include=["position"])
-        return io[0].get_atomic_numbers().tolist()
-
-    def get_masses(self) -> List[float]:
-        """Get atomic masses from the trajectory."""
-        io = znh5md.IO(self.file, variable_shape=False, include=["position"])
-        return io[0].get_masses().tolist()
-
-    def get_positions(self, index: slice) -> jnp.ndarray:
-        """Load unwrapped positions for a slice of atom indices."""
-        # TODO: for COM diffusion, we should process this here ?
-
-        log.info(f"Loading positions for index {index}")
-        io = znh5md.IO(self.file, variable_shape=False, include=["position"], mask=index)
         pos = jnp.stack([atoms.positions for atoms in io[:]])
         log.info(f"Loaded positions shape: {pos.shape}")
-        return pos  # shape: (n_frames, n_atoms_in_batch, 3)
-
-    def postprocess_positions(  # noqa: C901
-        self,
-        pos: jnp.ndarray,
-        masses,
-        atomic_numbers,
-        substructures,
-        atom_slice: slice,
-        max_cache_size: int = 10000,
-    ):
-        # pos: (n_frames, n_atoms_in_batch, 3)
-        # masses: (n_total_atoms,)
-        # atomic_numbers: (n_total_atoms,)
-        # substructures: dict[substructure_name -> list[tuple[atom_indices]]]
-        # atom_slice: slice (start, stop) for current batch of atoms
-
-        values = []
-        Zs = []
-
-        try:
-            cache = getattr(self, "data_cache")
-        except AttributeError:
-            cache = {}
-
-        # Track all molecular atom indices
-        molecular_indices = set()
-        mol_index_map = {}  # atom idx -> list of (substructure_name, mol_indices)
-
-        for sub_name, mols in substructures.items():
-            for mol_indices in mols:
-                for idx in mol_indices:
-                    mol_index_map.setdefault(idx, []).append(
-                        (sub_name, tuple(mol_indices))
-                    )
-                    molecular_indices.add(idx)
-
-        # Cache positions of molecular atoms, append standalone atoms directly
-        for i in range(atom_slice.start, atom_slice.stop):
-            rel_i = i - atom_slice.start
-            pos_i = pos[:, rel_i, :]  # (n_frames, 3)
-
-            if i in molecular_indices:
-                cache[i] = pos_i
-            else:
-                Z = atomic_numbers[i]
-                values.append(pos_i)
-                Zs.append(Z)
-
-        # Enforce cache size
-        if len(cache) > max_cache_size:
-            raise RuntimeError(f"Cache size exceeded max limit of {max_cache_size}")
-
-        # Track used molecules so we can remove them from cache
-        used_mol_keys = set()
-
-        for sub_name, mols in substructures.items():
-            for mol_indices in mols:
-                if all(idx in cache for idx in mol_indices):
-                    # All atoms in molecule are available, compute COM
-                    pos_stack = jnp.stack(
-                        [cache[idx] * masses[idx] for idx in mol_indices], axis=0
-                    )  # (n_atoms, n_frames, 3)
-                    total_mass = jnp.sum(jnp.array([masses[idx] for idx in mol_indices]))
-                    com = jnp.sum(pos_stack, axis=0) / total_mass  # (n_frames, 3)
-
-                    values.append(com)
-                    Zs.append(sub_name)
-
-                    used_mol_keys.add(tuple(mol_indices))
-
-        # Clear used entries from cache
-        for mol_indices in used_mol_keys:
-            for idx in mol_indices:
-                cache.pop(idx, None)
-        print(
-            f"Used {len(used_mol_keys)} molecular indices, remaining cache size: {len(cache)}"
-        )
-
-        self.data_cache = cache
-
-        values = jnp.stack(values, axis=1)  # shape: (n_frames, n_entities, 3)
-        return Zs, values
+        return pos  # shape: (n_frames, n_atoms, 3)
 
     def compute_diffusion_coefficients(
-        self, msds: Dict[int, List[jnp.ndarray]], timestep_fs: float
+        self, msds: Dict[str | int, List[jnp.ndarray]], timestep_fs: float
     ) -> Dict:
         """Calculate diffusion coefficients from MSD data.
 
@@ -177,9 +84,9 @@ class EinsteinSelfDiffusion(zntrack.Node):
             slope, intercept = jnp.linalg.lstsq(A, fit_msd, rcond=None)[0]
             D_fit = slope / 6
             fit_line = slope * time_ps + intercept
-            try:
+            if isinstance(Z, int):
                 symbol = chemical_symbols[Z]
-            except TypeError:
+            else:
                 symbol = Z
 
             results[Z] = {
@@ -258,88 +165,55 @@ class EinsteinSelfDiffusion(zntrack.Node):
         log.info("Collecting cell vectors and inverse cell vectors")
         cells, inv_cells = self.get_cells()
 
-        substructures = defaultdict(list)
-        # dict[str, list[tuple[int, ...]]]
-        if self.structures is not None:
-            io = znh5md.IO(self.file, variable_shape=False)
-            atoms = io[0]
-            log.info(f"Searching for substructures in {len(self.structures)} patterns")
-            for structure in self.structures:
-                indices = rdkit2ase.match_substructure(
-                    atoms,
-                    smiles=structure,
-                    suggestions=self.structures,
-                )
-                if len(indices) > 0:
-                    substructures[structure].extend(indices)
-
-                log.info(
-                    f"Found {len(indices)} matches for substructure {structure} in the dataset."
-                )
-            # TODO: in this case, we don't want to compute the of each atom, but rather the center of mass of the molecule, given by the indices
-            # - get the mass of each atom in the molecule from the initial structure using ase
-            # - assume the indices are the same for all frames, iterate the dataset in the given batch size, for all indices not in the molecule, compute the MSD as usual
-            # for all the others, store the positions in a dict[index] = positions, and as soon as we have all the positions for any molecule, compute the MSD for that molecule
-            # using the COM and then remove the indices / positions from the dataset
-            # have a max size of the data cache and raise an error, also allow direct indexing as an alternative.
-
-        log.info("Collecting atomic masses and numbers")
-        masses = self.get_masses()
-        atomic_numbers = self.get_atomic_numbers()
-        # use iddentifier and not aotmic numbers so one can also use com
         timestep_fs = (self.timestep * ureg.fs * self.sampling_rate).magnitude
         msds = defaultdict(list)
 
-        n_atoms = len(atomic_numbers)
-        log.info(f"Starting MSD calculation for {n_atoms} atoms")
+        if self.use_com or self.structures:
+            log.info("Computing center of mass trajectories")
+            entity_positions, _ = center_of_mass_trajectories(
+                file=self.file, structures=self.structures, wrap=False
+            )
+            # entity_positions is a dict: {identifier: jnp.ndarray (n_frames, n_entities, 3)}
+            # We need to flatten this into a list of (identifier, trajectory) pairs
+            entities_to_process = []
+            for identifier, positions_array in entity_positions.items():
+                for i in range(positions_array.shape[1]):
+                    entities_to_process.append((identifier, positions_array[:, i, :]))
+            log.info(f"Starting MSD calculation for {len(entities_to_process)} entities")
+
+        else:
+            log.info("Computing atomic trajectories")
+            io = znh5md.IO(self.file, variable_shape=False, include=["position"])
+            frames = io[:]
+            atomic_numbers = jnp.array(frames[0].get_atomic_numbers())
+            positions = jnp.stack([atoms.positions for atoms in frames])
+            positions = unwrap_positions(positions, cells, inv_cells)
+
+            entities_to_process = []
+            for i in range(positions.shape[1]):
+                entities_to_process.append((atomic_numbers[i].item(), positions[:, i, :]))
+            log.info(f"Starting MSD calculation for {len(entities_to_process)} atoms")
 
         if self.method == "direct":
 
             @jit
-            def msd_fn(x, cell, inv_cell):
-                # x_unwrapped = unwrap_positions(x, cell, inv_cell)
+            def msd_fn(x):
                 return compute_msd_direct(x)
 
             log.info("Using direct MSD computation method")
         elif self.method == "fft":
 
-            def msd_fn(x, cell, inv_cell):
-                # x_unwrapped = unwrap_positions(x, cell, inv_cell)
+            def msd_fn(x):
                 return compute_msd_fft(x)
 
             log.info("Using FFT-based MSD computation method")
         else:
             raise ValueError(f"Unknown method: {self.method}. Use 'direct' or 'fft'.")
 
-        # Process atoms in batches
-        for start in tqdm(range(0, n_atoms, self.batch_size), desc="Processing atoms"):
-            end = min(start + self.batch_size, n_atoms)
-            atom_slice = slice(start, end)
-            Z_batch = atomic_numbers[start:end]
-
-            pos = self.get_positions(atom_slice)  # shape: (n_frames, batch_size, 3)
-            # postprocess positions for substructures
-            # TODO: need to unwrap here!!
-            # pos = unwrap_positions(pos, cells, inv_cells)
-            # TODO: fix unnecessary multiple transposes
-            pos = unwrap_positions(pos, cells, inv_cells)
-            Z_batch, pos = self.postprocess_positions(
-                pos, masses, atomic_numbers, substructures, atom_slice
-            )
-            # each step print the shape of the cached pos
-            if self.method == "direct":
-                pos = jnp.transpose(pos, (1, 0, 2))
-                # TODO, specify vmap axis instead of transposing
-                results = vmap(lambda x: msd_fn(x, cells, inv_cells))(pos)
-            else:
-                # TODO: vmap this stuff
-                results = []
-                for atom_index in range(pos.shape[1]):
-                    pos_i = pos[:, atom_index, :]
-                    msd_i = msd_fn(pos_i, cells, inv_cells)
-                    results.append(msd_i)
-            for msd, Z in zip(results, Z_batch):
-                msds[Z].append(msd)
+        # Process entities in batches
+        for identifier, pos_i in tqdm(entities_to_process, desc="Processing entities"):
+            msd_i = msd_fn(pos_i)
+            msds[identifier].append(msd_i)
 
         results = self.compute_diffusion_coefficients(msds, timestep_fs)
         self.results = results

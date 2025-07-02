@@ -66,6 +66,7 @@ class KinisiSelfDiffusion(zntrack.Node):
         log.info(f"Unwrapped positions shape: {positions_unwrapped.shape}")
 
         substructures = defaultdict(list)
+        # TODO: use com stuff
         if self.structures:
             log.info(f"Searching for substructures in {len(self.structures)} patterns")
             for structure in self.structures:

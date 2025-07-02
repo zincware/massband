@@ -8,23 +8,13 @@ import rdkit2ase
 import znh5md
 import zntrack
 from rdkit import Chem
+from scipy.signal import correlate
 
 from massband.utils import unwrap_positions
 
 
 class RadiusOfGyration(zntrack.Node):
-    """Calculate the radius of gyration for molecules in a trajectory.
-
-    Attributes
-    ----------
-    file : str or Path
-        The path to the trajectory file. This is a dependency for the node.
-    suggestions : list[str], optional
-        A list of SMILES strings to help with bond detection in `rdkit2ase`.
-        Defaults to an empty list.
-    figures : Path, optional
-        The path to the directory where the output figures will be saved.
-    """
+    """Calculate the radius of gyration for molecules in a trajectory."""
 
     file: str | Path = zntrack.deps_path()
     suggestions: list[str] = zntrack.params(default_factory=list)
@@ -32,20 +22,6 @@ class RadiusOfGyration(zntrack.Node):
     results: dict = zntrack.metrics()
 
     def get_data(self) -> dict:
-        """Get data from the trajectory file.
-
-        This method reads the trajectory file and returns a dictionary with
-        positions, cells, inverse cells, and frames.
-
-        Returns
-        -------
-        dict
-            A dictionary with the following keys:
-            - positions: The positions of the atoms in the trajectory.
-            - cells: The cell vectors of the trajectory.
-            - inv_cells: The inverse cell vectors of the trajectory.
-            - frames: The list of ase.Atoms objects.
-        """
         io = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
         frames: list[ase.Atoms] = io[:]
         positions = jnp.stack([atoms.positions for atoms in frames])
@@ -60,11 +36,6 @@ class RadiusOfGyration(zntrack.Node):
         }
 
     def run(self) -> None:
-        """Run the radius of gyration calculation.
-
-        This method calculates the radius of gyration for each molecule in the
-        trajectory and saves the results as plots.
-        """
         data = self.get_data()
         positions_unwrapped = unwrap_positions(
             data["positions"], data["cells"], data["inv_cells"]
@@ -91,15 +62,21 @@ class RadiusOfGyration(zntrack.Node):
 
         self.figures.mkdir(parents=True, exist_ok=True)
 
+        all_rg_values = []
+
         for smiles, rg_values_list in rg_by_smiles.items():
             rg_values = jnp.array(rg_values_list)
             mean_rg = jnp.mean(rg_values, axis=0)
             std_rg = jnp.std(rg_values, axis=0)
+
+            all_rg_values.append(rg_values)
+
             self.results[smiles] = {
                 "mean": jnp.mean(mean_rg).item(),
                 "std": jnp.mean(std_rg).item(),
             }
 
+            # --- Time-series plot ---
             plt.figure()
             plt.plot(mean_rg, label="Mean RG")
             plt.fill_between(
@@ -113,9 +90,54 @@ class RadiusOfGyration(zntrack.Node):
             plt.ylabel("Radius of Gyration (Å)")
             plt.title(f"Radius of Gyration for {smiles}")
             plt.legend()
-            # Sanitize smiles for filename
             filename_smiles = "".join(c for c in smiles if c.isalnum())
             plt.savefig(self.figures / f"rog_{filename_smiles}.png")
+            plt.close()
+
+            # --- Histogram ---
+            plt.figure()
+            plt.hist(rg_values.flatten(), bins=30, alpha=0.7)
+            plt.xlabel("Radius of Gyration (Å)")
+            plt.ylabel("Frequency")
+            plt.title(f"Rg Distribution for {smiles}")
+            plt.savefig(self.figures / f"hist_rog_{filename_smiles}.png")
+            plt.close()
+
+            # --- Autocorrelation ---
+            ac = self._autocorrelation(mean_rg)
+            plt.figure()
+            plt.plot(ac)
+            plt.xlabel("Lag")
+            plt.ylabel("Autocorrelation")
+            plt.title(f"Autocorrelation of Rg: {smiles}")
+            plt.savefig(self.figures / f"ac_rog_{filename_smiles}.png")
+            plt.close()
+
+        # --- Global Rg analysis ---
+        if all_rg_values:
+            all_rg = jnp.concatenate(all_rg_values, axis=0)
+            global_mean_rg = jnp.mean(all_rg, axis=0)
+            global_std_rg = jnp.std(all_rg, axis=0)
+
+            self.results["global"] = {
+                "mean": jnp.mean(global_mean_rg).item(),
+                "std": jnp.mean(global_std_rg).item(),
+            }
+
+            plt.figure()
+            plt.plot(global_mean_rg, label="Global Mean RG")
+            plt.fill_between(
+                range(len(global_mean_rg)),
+                global_mean_rg - global_std_rg,
+                global_mean_rg + global_std_rg,
+                alpha=0.2,
+                label="Std Dev",
+            )
+            plt.xlabel("Frame")
+            plt.ylabel("Radius of Gyration (Å)")
+            plt.title("Global Mean Radius of Gyration")
+            plt.legend()
+            plt.savefig(self.figures / "global_rog.png")
             plt.close()
 
     def _calculate_rg(
@@ -124,22 +146,6 @@ class RadiusOfGyration(zntrack.Node):
         masses: jnp.ndarray,
         positions_unwrapped: jnp.ndarray,
     ) -> jnp.ndarray:
-        """Calculate the radius of gyration for a single molecule.
-
-        Parameters
-        ----------
-        molecule_indices : jnp.ndarray
-            The indices of the atoms in the molecule.
-        masses : jnp.ndarray
-            The masses of the atoms.
-        positions_unwrapped : jnp.ndarray
-            The unwrapped positions of the atoms.
-
-        Returns
-        -------
-        jnp.ndarray
-            The radius of gyration for each frame.
-        """
         molecule_indices = jnp.array(list(molecule_indices))
         molecule_masses = masses[molecule_indices]
         total_mass = jnp.sum(molecule_masses)
@@ -154,3 +160,10 @@ class RadiusOfGyration(zntrack.Node):
         sum_mass_weighted_sq_dist = jnp.sum(mass_weighted_sq_dist, axis=1)
         rg_squared = sum_mass_weighted_sq_dist / total_mass
         return jnp.sqrt(rg_squared)
+
+    def _autocorrelation(self, x: jnp.ndarray) -> jnp.ndarray:
+        x = x - jnp.mean(x)
+        result = correlate(x, x, mode="full")
+        result = result[result.size // 2 :]
+        result = result / result[0]
+        return result

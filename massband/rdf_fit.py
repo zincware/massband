@@ -253,6 +253,7 @@ def bayesian_fit_uravu(
 
 # --- MAIN PEAK FITTING FUNCTION ---
 
+
 def fit_first_peak(  # noqa: C901
     r: np.ndarray,
     g_r: np.ndarray,
@@ -372,16 +373,25 @@ def fit_first_peak(  # noqa: C901
                 bounds = ([0, min(r_fit), 0], [np.inf, max(r_fit), np.inf])
             elif fit_method == "skewed_gaussian":
                 p0 = [amp_guess, r_peak_guess, sigma_guess, 1.0]
-                bounds = ([0, min(r_fit), 0, -np.inf], [np.inf, max(r_fit), np.inf, np.inf])
+                bounds = (
+                    [0, min(r_fit), 0, -np.inf],
+                    [np.inf, max(r_fit), np.inf, np.inf],
+                )
             elif fit_method == "emg":
                 p0 = [amp_guess, r_peak_guess, sigma_guess, 1.0, 1.0]
-                bounds = ([0, min(r_fit), 0, 0, 0], [np.inf, max(r_fit), np.inf, np.inf, np.inf])
+                bounds = (
+                    [0, min(r_fit), 0, 0, 0],
+                    [np.inf, max(r_fit), np.inf, np.inf, np.inf],
+                )
             elif fit_method == "generalized_gaussian":
                 p0 = [amp_guess, r_peak_guess, sigma_guess, 2.0]
                 bounds = ([0, min(r_fit), 0, 2], [np.inf, max(r_fit), np.inf, 5])
             elif fit_method == "skewed_generalized_gaussian":
                 p0 = [amp_guess, r_peak_guess, sigma_guess, 2.0, 1.0]
-                bounds = ([0, min(r_fit), 0, 2, -np.inf], [np.inf, max(r_fit), np.inf, 5, np.inf])
+                bounds = (
+                    [0, min(r_fit), 0, 2, -np.inf],
+                    [np.inf, max(r_fit), np.inf, 5, np.inf],
+                )
             else:
                 raise ValueError("Invalid fitting method")
 
