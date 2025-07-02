@@ -10,6 +10,8 @@ from tqdm import tqdm
 from massband.com import identify_substructures, load_unwrapped_frames
 from massband.diffusion.utils import compute_msd_fft
 
+# https://www.biorxiv.org/content/10.1101/2025.05.27.656261v1.full.pdf
+
 
 @jax.jit
 def unwrap_angles(p, period=2 * jnp.pi):
@@ -78,7 +80,7 @@ class RotationalSelfDiffusion(zntrack.Node):
 
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
-    def run(self):
+    def run(self):  # noqa: C901
         frames, positions, cells = load_unwrapped_frames(self.file)
         masses = jnp.array(frames[0].get_masses())
         substructures = identify_substructures(frames[0], self.structures)
@@ -216,14 +218,14 @@ class RotationalSelfDiffusion(zntrack.Node):
 
                 # Time axis in picoseconds
                 time_axis = (
-                    jnp.arange(len(msd_curve)) * self.timestep * self.sampling_rate
+                    jnp.arange(len(msd_curve)) * self.timestep * self.sampling_rate / 1000
                 )
 
                 ax.plot(time_axis, msd_curve, label=f"Average for {structure}")
 
                 ax.set_title(f"Rotational Self-Diffusion: {structure} - {angle_name}")
-                ax.set_xlabel("Time (ps)")
-                ax.set_ylabel("Mean Squared Angular Displacement (rad²)")
+                ax.set_xlabel("Time / ps")
+                ax.set_ylabel("Mean Squared Angular Displacement / rad²")
                 ax.legend()
                 ax.grid(True, linestyle="--", alpha=0.6)
                 fig.savefig(self.figures / f"{structure}_{angle_name}_msd.png", dpi=300)
