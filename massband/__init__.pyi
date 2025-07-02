@@ -1,4 +1,4 @@
-from .diffusion import EinsteinSelfDiffusion, KinisiSelfDiffusion
+from .diffusion import EinsteinSelfDiffusion, KinisiSelfDiffusion, RotationalSelfDiffusion
 from .radius_of_gyration import RadiusOfGyration
 from .rdf import RadialDistributionFunction
 
@@ -7,4 +7,5 @@ __all__ = [
     "EinsteinSelfDiffusion",
     "KinisiSelfDiffusion",
     "RadiusOfGyration",
+    "RotationalSelfDiffusion",
 ]
