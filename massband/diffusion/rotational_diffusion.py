@@ -4,6 +4,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import numpy as np
 import zntrack
 from tqdm import tqdm
 
@@ -75,8 +76,7 @@ class RotationalSelfDiffusion(zntrack.Node):
     sampling_rate: int = zntrack.params()
     timestep: float = zntrack.params()
     structures: list[str] | None = zntrack.params(default=None)
-
-    diffusion_results: Path = zntrack.outs_path
+    results: dict = zntrack.outs()
 
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
@@ -186,12 +186,11 @@ class RotationalSelfDiffusion(zntrack.Node):
             for structure, orients in mol_orientations.items()
         }
 
-        # Ensure the figures directory exists
         self.figures.mkdir(parents=True, exist_ok=True)
+        self.results = {}  # Initialize dict for results
 
         unwrap_vmap = jax.jit(jax.vmap(unwrap_angles, in_axes=1, out_axes=1))
 
-        # Plot Euler angles for each structure and component
         for structure, euler_angles_rad in tqdm(
             mol_orientations.items(), desc="Processing Euler angles"
         ):
@@ -201,28 +200,26 @@ class RotationalSelfDiffusion(zntrack.Node):
                 euler_angles_rad[:, :, 2],
             )
 
-            # 4. UNWRAP angles for each component and molecule
             alpha_unwrapped = unwrap_vmap(alpha_raw)
             beta_unwrapped = unwrap_vmap(beta_raw)
             gamma_unwrapped = unwrap_vmap(gamma_raw)
 
-            # Calculate and plot MSD for each unwrapped angle component
             for angle_data, angle_name in zip(
                 [alpha_unwrapped, beta_unwrapped, gamma_unwrapped],
                 ["alpha", "beta", "gamma"],
             ):
-                fig, ax = plt.subplots(figsize=(10, 6))
-
-                # Use the corrected, efficient MSD function
                 msd_curve = compute_msd_fft(angle_data)
-
-                # Time axis in picoseconds
                 time_axis = (
                     jnp.arange(len(msd_curve)) * self.timestep * self.sampling_rate / 1000
                 )
 
-                ax.plot(time_axis, msd_curve, label=f"Average for {structure}")
+                # Save to self.results as np.ndarray
+                self.results[f"{structure}_{angle_name}_msd"] = np.array(msd_curve)
+                self.results[f"{structure}_{angle_name}_time"] = np.array(time_axis)
 
+                # Plot as before
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.plot(time_axis, msd_curve, label=f"Average for {structure}")
                 ax.set_title(f"Rotational Self-Diffusion: {structure} - {angle_name}")
                 ax.set_xlabel("Time / ps")
                 ax.set_ylabel("Mean Squared Angular Displacement / rad²")
