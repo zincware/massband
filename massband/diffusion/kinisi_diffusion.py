@@ -3,7 +3,7 @@ import pickle
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, TypedDict
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -18,6 +18,13 @@ from massband.utils import unwrap_positions
 
 log = logging.getLogger(__name__)
 
+class DiffusionResults(TypedDict):
+    diffusion_coefficient: float
+    std: float
+    credible_interval_68: list[float]
+    credible_interval_95: list[float]
+    asymmetric_uncertainty: list[float]
+    occurrences: int
 
 @dataclass
 class DiffusionPlotData:
@@ -36,7 +43,7 @@ class KinisiSelfDiffusion(zntrack.Node):
     time_step: float = zntrack.params()
     structures: Optional[list[str]] = zntrack.params(None)
     start_dt: float = zntrack.params(50)  # in ps
-    results: dict = zntrack.metrics()
+    results: dict[str, DiffusionResults] = zntrack.metrics()
     seed: int = zntrack.params(42)
 
     data_path: Path = zntrack.outs_path(zntrack.nwd / "diffusion_data")
@@ -89,6 +96,7 @@ class KinisiSelfDiffusion(zntrack.Node):
                 smiles=structure,
                 suggestions=self.structures,
             )
+            occurrences: int = len(specie_indices)
             masses = sub_frames[0][specie_indices[0]].get_masses().tolist()
 
             diff = DiffusionAnalyzer.from_ase(
@@ -129,12 +137,14 @@ class KinisiSelfDiffusion(zntrack.Node):
             uncertainty_high = ci68[1] - D_mean
 
             # Store in results
+            # TODO: include typed dict type hints.
             self.results[structure] = {
                 "diffusion_coefficient": result.D_n,
                 "std": D_std,
                 "credible_interval_68": ci68.tolist(),
                 "credible_interval_95": ci95.tolist(),
                 "asymmetric_uncertainty": [uncertainty_low, uncertainty_high],
+                "occurrences": occurrences,
             }
 
         self.plot()
