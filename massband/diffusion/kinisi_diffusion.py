@@ -3,7 +3,7 @@ import pickle
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union, TypedDict
+from typing import Optional, TypedDict, Union
 
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -20,6 +20,7 @@ from massband.utils import unwrap_positions
 
 log = logging.getLogger(__name__)
 
+
 class DiffusionResults(TypedDict):
     diffusion_coefficient: float
     std: float
@@ -27,6 +28,7 @@ class DiffusionResults(TypedDict):
     credible_interval_95: list[float]
     asymmetric_uncertainty: list[float]
     occurrences: int
+
 
 @dataclass
 class DiffusionPlotData:

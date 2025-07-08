@@ -4,19 +4,22 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import zntrack
 from tqdm import tqdm
 
+from massband.abc import ComparisonResults
 from massband.com import identify_substructures, load_unwrapped_frames
 from massband.diffusion.utils import compute_msd_fft
-from massband.rotation.utils import _orientation_to_euler_single, compute_all_orientations, compute_com, compute_orientation, unwrap_angles
-from massband.abc import ComparisonResults
-import plotly.graph_objects as go
+from massband.rotation.utils import (
+    _orientation_to_euler_single,
+    compute_all_orientations,
+    compute_com,
+    compute_orientation,
+    unwrap_angles,
+)
 
 # https://www.biorxiv.org/content/10.1101/2025.05.27.656261v1.full.pdf
-
-
-
 
 
 # Vectorized version using vmap
@@ -38,12 +41,8 @@ class RotationalSelfDiffusion(zntrack.Node):
         masses = jnp.array(frames[0].get_masses())
         substructures = identify_substructures(frames[0], self.structures)
 
-       
-
-       
-
         # Vectorized version for all frames
-       
+
         com_positions = defaultdict(list)
         mol_orientations = defaultdict(list)
 
@@ -122,7 +121,6 @@ class RotationalSelfDiffusion(zntrack.Node):
                 ax.grid(True, linestyle="--", alpha=0.6)
                 fig.savefig(self.figures / f"{structure}_{angle_name}_msd.png", dpi=300)
                 plt.close(fig)
-
 
     @classmethod
     def compare(cls, *nodes: "RotationalSelfDiffusion") -> ComparisonResults:

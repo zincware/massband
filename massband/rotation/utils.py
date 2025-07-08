@@ -7,6 +7,7 @@ def compute_com(mol_positions, mol_masses):
     weighted_positions = mol_positions * mol_masses[None, :, None]
     return jnp.sum(weighted_positions, axis=1) / jnp.sum(mol_masses)
 
+
 @jax.jit
 def compute_orientation(positions, mol_masses, ref_orientation=None):
     # Center positions
@@ -31,6 +32,7 @@ def compute_orientation(positions, mol_masses, ref_orientation=None):
         orient = -orient
     return orient
 
+
 @jax.jit
 def compute_all_orientations(mol_positions, mol_masses, ref_orientation):
     # Compute COMs for all frames
@@ -48,9 +50,7 @@ def compute_all_orientations(mol_positions, mol_masses, ref_orientation):
         eye = jnp.eye(3)
 
         # Compute inertia tensors for all frames
-        term1 = (mol_masses[None, :] * r_sq).sum(axis=1)[:, None, None] * eye[
-            None, :, :
-        ]
+        term1 = (mol_masses[None, :] * r_sq).sum(axis=1)[:, None, None] * eye[None, :, :]
         term2 = (
             mol_masses[None, :, None, None] * r[:, :, :, None] * r[:, :, None, :]
         ).sum(axis=1)
@@ -66,7 +66,6 @@ def compute_all_orientations(mol_positions, mol_masses, ref_orientation):
     flip = jnp.dot(orients, ref_orientation) < 0
     orients = jnp.where(flip[:, None], -orients, orients)
     return orients
-
 
 
 @jax.jit
@@ -87,8 +86,6 @@ def unwrap_angles(p, period=2 * jnp.pi):
     # Initialize carry with the first angle and zero correction
     _, unwrapped = jax.lax.scan(scan_fn, (p[0], 0.0), p)
     return unwrapped
-
-
 
 
 # JAX implementation of orientation_to_euler

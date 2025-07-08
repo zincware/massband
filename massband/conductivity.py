@@ -1,11 +1,11 @@
-import znh5md
-
-import pint
-import h5py
-import zntrack
-from massband.diffusion.kinisi_diffusion import KinisiSelfDiffusion
 import ase
+import h5py
+import pint
+import znh5md
+import zntrack
 from rdkit import Chem
+
+from massband.diffusion.kinisi_diffusion import KinisiSelfDiffusion
 
 ureg = pint.UnitRegistry()
 
@@ -28,35 +28,30 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
         with self.diffusion.state.fs.open(self.diffusion.file, "rb") as f:
             with h5py.File(f) as file:
                 atoms: ase.Atoms = znh5md.IO(file_handle=file)[0]
-        
+
         volume = atoms.get_volume() * ureg.angstrom**3
 
         # e^2 / (T * kB * V)
-        prefactor = (ureg.elementary_charge**2) / (
+        prefactor = (1 * ureg.elementary_charge) **2 / (
             self.temperature * ureg.kelvin * ureg.boltzmann_constant * volume
         )
         # Sum contributions from each ion type
-        total = 0 * (ureg.angstrom**2 / ureg.nanosecond)
+        values = []
 
         for kind, data in self.diffusion.results.items():
             n_ions = data["occurrences"]
             diff = data["diffusion_coefficient"] * ureg.angstrom**2 / ureg.nanosecond
             mol = Chem.MolFromSmiles(kind)
             charge = sum(atom.GetFormalCharge() for atom in mol.GetAtoms())
-            print(f"Using {kind} with charge {charge} and diffusion {diff}")
-
-            # Optional: ensure charge is valid
-            if charge == 0:
-                continue  # neutral species don't contribute
+            print(f"Using {n_ions} x {kind} with charge {charge} and diffusion {diff}")
 
             value = diff * (charge) ** 2 * n_ions
-            total += value
+            values.append(value)
 
-        # Final ionic conductivity
-        sigma_nernst_einst = (prefactor * total).to("S/m")
+        sigma_nernst_einst = (prefactor * sum(values)).to("S/m")
 
         self.metrics = {
             "Nernst-Einstein ionic conductivity": sigma_nernst_einst.magnitude
         }
 
-        print(self.metrics)
+        print(sigma_nernst_einst)
