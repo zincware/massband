@@ -1,19 +1,19 @@
 import itertools
 import logging
-from collections import defaultdict
 from pathlib import Path
 
 import jax.numpy as jnp
 import plotly.graph_objects as go
 import zntrack
 from ase.data import atomic_numbers
-from jax import vmap
+from jax import vmap, jit
+from tqdm import tqdm
+from functools import partial
 
 from massband.abc import ComparisonResults
-from massband.com import center_of_mass_trajectories
+from massband.dataloader import TimeBatchedLoader
 from massband.rdf_fit import FIT_METHODS
 from massband.rdf_plot import plot_rdf
-from massband.utils import wrap_positions
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +71,31 @@ def _ideal_gas_correction(bin_edges: jnp.ndarray, L: float) -> jnp.ndarray:
 
     return shell_area * dr
 
+@partial(jit, static_argnames=["exclude_self"])
+def mic_distances(frame_a, frame_b, frame_cell, exclude_self):
+    inv_cell = jnp.linalg.inv(frame_cell.T)
+    frac_a = frame_a @ inv_cell
+    frac_b = frame_b @ inv_cell
+
+    delta_frac = frac_a[:, None, :] - frac_b[None, :, :]
+    delta_frac -= jnp.round(delta_frac)
+    delta_cart = delta_frac @ frame_cell.T
+    dists = jnp.linalg.norm(delta_cart, axis=-1)
+    if exclude_self:
+        dists = dists.at[jnp.diag_indices_from(dists)].set(
+            jnp.inf
+        )  # ignore self-distance
+
+    return dists
+
+@partial(jit, static_argnames=["exclude_self"])
+def rdf_single_frame(pos_a, pos_b, frame_cell, exclude_self, bin_edges):
+    dists = mic_distances(
+        pos_a, pos_b, frame_cell, exclude_self=exclude_self
+    )
+    dists = dists.flatten()
+    hist = jnp.histogram(dists, bins=bin_edges)[0]
+    return hist
 
 def compute_rdf(
     positions_a, positions_b, cell, bin_edges, batch_size=100, exclude_self=False
@@ -98,35 +123,28 @@ def compute_rdf(
     """
     n_frames = positions_a.shape[0]
 
-    def mic_distances(frame_a, frame_b, frame_cell, exclude_self=True):
-        inv_cell = jnp.linalg.inv(frame_cell.T)
-        frac_a = frame_a @ inv_cell
-        frac_b = frame_b @ inv_cell
-
-        delta_frac = frac_a[:, None, :] - frac_b[None, :, :]
-        delta_frac -= jnp.round(delta_frac)
-        delta_cart = delta_frac @ frame_cell.T
-        dists = jnp.linalg.norm(delta_cart, axis=-1)
-
-        if exclude_self and frame_a.shape[0] == frame_b.shape[0]:
-            dists = dists.at[jnp.diag_indices_from(dists)].set(
-                jnp.inf
-            )  # ignore self-distance
-
-        return dists
-
-    def rdf_single_frame(pos_a, pos_b, frame_cell, exclude_self):
-        dists = mic_distances(
-            pos_a, pos_b, frame_cell, exclude_self=exclude_self
-        ).flatten()
-        hist = jnp.histogram(dists, bins=bin_edges)[0]
-        return hist
-
-    # Batch RDF evaluation over all frames
-    histograms = vmap(rdf_single_frame, in_axes=(0, 0, 0, None))(
-        positions_a, positions_b, cell, exclude_self
-    )
-    hist_sum = jnp.sum(histograms, axis=0)
+    # Process frames in batches to reduce memory usage
+    hist_sum = jnp.zeros(len(bin_edges) - 1)
+    
+    # Create progress bar for batch processing
+    n_batches = (n_frames + batch_size - 1) // batch_size
+    
+    for i in range(n_batches):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, n_frames)
+        
+        # Extract batch data
+        batch_pos_a = positions_a[start_idx:end_idx]
+        batch_pos_b = positions_b[start_idx:end_idx]
+        batch_cell = cell[start_idx:end_idx]
+        # TODO: cell is NVT, so it should always be the same for all frames
+        # Compute RDF for this batch
+        batch_histograms = vmap(rdf_single_frame, in_axes=(0, 0, 0, None, None))(
+            batch_pos_a, batch_pos_b, batch_cell, exclude_self, bin_edges
+        )
+        
+        # Accumulate histogram
+        hist_sum += jnp.sum(batch_histograms, axis=0)
 
     # Normalize RDF
     volume = jnp.linalg.det(cell)
@@ -149,6 +167,9 @@ class RadialDistributionFunction(zntrack.Node):
     batch_size: int = zntrack.params()  # You can set a default or make it configurable
     bin_width: float = zntrack.params(0.05)  # Width of the bins for RDF
     structures: list[str] | None = zntrack.params()
+    start: int = zntrack.params(0)  # Starting frame index
+    stop: int | None = zntrack.params(None)  # Ending frame index (exclusive)
+    step: int = zntrack.params(1)  # Step size for frame selection
 
     bayesian: bool = zntrack.params(False)  # Whether to use Bayesian fitting
     fit_method: FIT_METHODS = zntrack.params("none")  # Method for fitting the
@@ -158,17 +179,48 @@ class RadialDistributionFunction(zntrack.Node):
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
     def run(self):
-        com_positions, cells = center_of_mass_trajectories(
-            file=self.file, structures=self.structures, wrap=True
+        loader = TimeBatchedLoader(
+            file=self.file,
+            batch_size=self.batch_size,
+            structures=self.structures,
+            wrap=True,
+            fixed_cell=True,
+            com=self.structures is not None,  # Compute center of mass if structures are provided
+            start=self.start,
+            stop=self.stop,
+            step=self.step,
         )
+        
+        # Initialize variables for RDF computation
+        cells = None
+        structure_names = None
+        rdf_accumulators = {}
+        total_frames = 0
+        
+        # Determine max distance and bin edges from first batch
+        cells = loader.first_frame_cell
+        # structure_names = list(first_batch_data.keys())
+        structure_names = list(loader.indices.keys())
 
-        # now wrap the compute the rdfs and wrap the positions
+        # Compute RDF parameters from cell dimensions
+        max_distance = 0.5 * float(jnp.min(jnp.linalg.norm(cells, axis=-1)))
+        
+        # Add safety checks for max_distance
+        if not jnp.isfinite(max_distance) or max_distance <= 0:
+            raise ValueError(f"Invalid max_distance: {max_distance}. Check cell dimensions.")
+            
+        # Limit max_distance to a reasonable value to prevent too many bins
+        max_distance = min(max_distance, 50.0)  # Cap at 50 Å
+        
+        log.info(f"Using max_distance = {max_distance:.2f} Å with bin_width = {self.bin_width}")
 
-        self.results = defaultdict(list)
-        bin_edges = jnp.arange(
-            0.0, 10.0 + self.bin_width, self.bin_width
-        )  # You can customize max range
+        bin_edges = jnp.arange(0.0, max_distance + self.bin_width, self.bin_width)
+        
+        # Check if we have too many bins
+        if len(bin_edges) > 10000:
+            raise ValueError(f"Too many bins ({len(bin_edges)}). Consider increasing bin_width or reducing max_distance.")
 
+        # Determine structure pairs for RDF computation
         def is_element(name):
             return name in atomic_numbers
 
@@ -177,72 +229,74 @@ class RadialDistributionFunction(zntrack.Node):
             a_is_elem = is_element(a)
             b_is_elem = is_element(b)
             if a_is_elem and b_is_elem:
-                # Both elements: sort by atomic number
-                return (
-                    0,
-                    min(atomic_numbers[a], atomic_numbers[b]),
-                    max(atomic_numbers[a], atomic_numbers[b]),
-                )
+                return (0, min(atomic_numbers[a], atomic_numbers[b]), max(atomic_numbers[a], atomic_numbers[b]))
             elif a_is_elem:
-                # a is element, b is not
                 return (1, atomic_numbers[a], b)
             elif b_is_elem:
-                # b is element, a is not
                 return (1, atomic_numbers[b], a)
             else:
-                # Neither is element: sort alphabetically
                 return (2, min(a, b), max(a, b))
 
-        pairs = list(itertools.combinations_with_replacement(com_positions.keys(), 2))
-        pairs = [
-            tuple(
-                sorted(
-                    pair,
-                    key=lambda x: (
-                        not is_element(x),
-                        atomic_numbers.get(x, float("inf")),
-                        x,
-                    ),
-                )
-            )
-            for pair in pairs
-        ]
+        pairs = list(itertools.combinations_with_replacement(structure_names, 2))
+        pairs = [tuple(sorted(pair, key=lambda x: (not is_element(x), atomic_numbers.get(x, float("inf")), x))) for pair in pairs]
         pairs = sorted(set(pairs), key=sort_key)
-
-        for struct_a, struct_b in pairs:
-            pos_a = com_positions[struct_a]
-            pos_b = com_positions[struct_b]
-
-            print(f"Computing RDF for {struct_a} - {struct_b}")
-            print(f"Positions A shape: {pos_a.shape}, Positions B shape: {pos_b.shape}")
-
-            # Wrap positions into the box
-            wrapped_a = wrap_positions(pos_a, cells)
-            wrapped_b = wrap_positions(pos_b, cells)
-
-            # Compute RDF over all frames
-            g_r = compute_rdf(
-                positions_a=wrapped_a,
-                positions_b=wrapped_b,
-                cell=cells,
-                bin_edges=bin_edges,
-                batch_size=self.batch_size,
-                exclude_self=(
-                    struct_a == struct_b
-                ),  # Exclude self-distances for intra-group RDF
-            )  # shape (n_bins,)
-
-            self.results[(struct_a, struct_b)].append(g_r)
-
-        self.results = {k: jnp.array(v).mean(axis=0) for k, v in self.results.items()}
+        
+        # Initialize accumulators for each pair
+        for pair in pairs:
+            rdf_accumulators[pair] = jnp.zeros(len(bin_edges) - 1)
+        
+        # Process batches incrementally
+        batch_number = 0
+        pbar = tqdm(loader, desc="Processing RDF batches", unit="batch")
+        
+        for batch_data, batch_cells, _ in pbar:
+            batch_number += 1
+            batch_frames = list(batch_data.values())[0].shape[0]
+            total_frames += batch_frames
+            
+            # Update progress bar description with current batch info
+            pbar.set_description(f"Processing batch {batch_number}/{len(loader)}")
+            pbar.set_postfix(frames=f"{total_frames}")
+            
+            # Create cells array for this batch
+            batch_cells_array = jnp.tile(batch_cells[None, :, :], (batch_frames, 1, 1))
+            
+            for struct_a, struct_b in pairs:
+                pos_a = batch_data[struct_a]
+                pos_b = batch_data[struct_b]
+                
+                # Positions are already wrapped by TimeBatchedLoader
+                g_r = compute_rdf(
+                    positions_a=pos_a,
+                    positions_b=pos_b,
+                    cell=batch_cells_array,
+                    bin_edges=bin_edges,
+                    exclude_self=(struct_a == struct_b),
+                    batch_size=50
+                )
+                pbar.set_postfix(
+                    pair=f"{struct_a}-{struct_b}",
+                )
+                
+                # Accumulate histogram weighted by number of frames
+                rdf_accumulators[struct_a, struct_b] += g_r * batch_frames
+        
+        # Average the accumulated RDFs
+        self.results = {}
+        for pair, accumulated_rdf in rdf_accumulators.items():
+            self.results[pair] = accumulated_rdf / total_frames
         self.figures.mkdir(exist_ok=True, parents=True)
+
+        log.info("Creating RDF plots")
         plot_rdf(
             self.results,
             self.figures / "rdf.png",
+            bin_width=self.bin_width,
             bayesian=self.bayesian,
             fit_method=self.fit_method,
         )
 
+        log.info("Saving RDF results")
         self.results = {"|".join(k): v.tolist() for k, v in self.results.items()}
 
     @classmethod
