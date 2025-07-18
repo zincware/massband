@@ -5,14 +5,13 @@ from collections import defaultdict
 from pathlib import Path
 
 import ase
-import jax
 import jax.numpy as jnp
-from jax import jit, lax
-
 import rdkit2ase
 import znh5md
+from jax import jit, lax
 
 log = logging.getLogger(__name__)
+
 
 @jit
 def unwrap_positions_image_flags_batched(
@@ -35,6 +34,7 @@ def unwrap_positions_image_flags_batched(
     pos_unwrapped = jnp.einsum("ij,faj->fai", cell, frac_unwrapped)
     return pos_unwrapped, final_flags
 
+
 @jit
 def unwrap_trajectory_image_flags(
     pos: jnp.ndarray, cell: jnp.ndarray, inv_cell: jnp.ndarray
@@ -42,7 +42,7 @@ def unwrap_trajectory_image_flags(
     """Unwraps a full trajectory slice using image flags (for SpeciesBatchedLoader)."""
     frac = jnp.einsum("ij,faj->fai", inv_cell, pos)
     initial_flags = jnp.zeros_like(frac[0], dtype=jnp.int32)
-    
+
     def _update_step(flags_prev, frac_curr_prev_tuple):
         frac_curr, frac_prev = frac_curr_prev_tuple
         delta_frac = frac_curr - frac_prev
@@ -58,6 +58,7 @@ def unwrap_trajectory_image_flags(
 
 
 # --- UTILITY FUNCTIONS ---
+
 
 @jit
 def wrap_positions(
@@ -195,7 +196,9 @@ class TimeBatchedLoader:
         if not self.fixed_cell:
             raise NotImplementedError("Non-fixed cell handling is not implemented yet.")
 
-        self.handler = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
+        self.handler = znh5md.IO(
+            self.file, variable_shape=False, include=["position", "box"]
+        )
         effective_stop = self.stop if self.stop is not None else len(self.handler)
         self.total_frames = len(range(self.start, effective_stop, self.step))
 
@@ -207,20 +210,22 @@ class TimeBatchedLoader:
             log.info(f"Loading {self.total_frames} frames into memory...")
             self.handler = self.handler[self.start : self.stop : self.step]
             self.start, self.step = 0, 1
-        
+
         first_frame_raw = self.handler[0]
         self.first_frame_atoms = rdkit2ase.unwrap_structures(first_frame_raw)
         self.first_frame_cell = jnp.array(self.first_frame_atoms.get_cell()[:])
         self.first_frame_inv_cell = jnp.linalg.inv(self.first_frame_cell)
-        
+
         first_frame_pos = jnp.array(self.first_frame_atoms.get_positions())
         self.masses = jnp.array(self.first_frame_atoms.get_masses())
         self.indices = _get_indices(self.first_frame_atoms, self.structures)
 
         # State for iteration: last wrapped position and the integer image flags
         self.last_wrapped_pos = first_frame_pos
-        self.image_flag_state = jnp.zeros((len(self.first_frame_atoms), 3), dtype=jnp.int32)
-        
+        self.image_flag_state = jnp.zeros(
+            (len(self.first_frame_atoms), 3), dtype=jnp.int32
+        )
+
         self.iter_offset = 0
         log.info(f"Initialized loader for {self.total_frames} frames from {self.file}")
 
@@ -234,7 +239,9 @@ class TimeBatchedLoader:
         # Reset state for a new iteration to ensure reproducibility
         first_frame_pos = jnp.array(self.first_frame_atoms.get_positions())
         self.last_wrapped_pos = first_frame_pos
-        self.image_flag_state = jnp.zeros((len(self.first_frame_atoms), 3), dtype=jnp.int32)
+        self.image_flag_state = jnp.zeros(
+            (len(self.first_frame_atoms), 3), dtype=jnp.int32
+        )
         return self
 
     def __next__(self) -> t.Tuple[dict[str, jnp.ndarray], jnp.ndarray, jnp.ndarray]:
@@ -249,14 +256,14 @@ class TimeBatchedLoader:
         batch = self.handler[slice_start:slice_stop:slice_step]
         if not batch:
             raise StopIteration
-            
+
         batch_positions = jnp.array([x.get_positions() for x in batch])
-        
+
         # Prepend the last wrapped position from the previous batch to provide context
         positions_with_context = jnp.concatenate(
             [self.last_wrapped_pos[None, :], batch_positions], axis=0
         )
-        
+
         # Call the image flag unwrapping function with the context and current state
         unwrapped_pos, new_image_flag_state = unwrap_positions_image_flags_batched(
             positions_with_context,
@@ -264,7 +271,7 @@ class TimeBatchedLoader:
             self.first_frame_inv_cell,
             self.image_flag_state,
         )
-        
+
         # Update the state for the next iteration
         self.image_flag_state = new_image_flag_state
         self.last_wrapped_pos = batch_positions[-1]
@@ -288,7 +295,9 @@ class TimeBatchedLoader:
         results = {}
         for structure, pos in data.items():
             if self.wrap:
-                pos = wrap_positions(pos, self.first_frame_cell, self.first_frame_inv_cell)
+                pos = wrap_positions(
+                    pos, self.first_frame_cell, self.first_frame_inv_cell
+                )
             results[structure] = pos
 
         self.iter_offset += frames_in_batch
@@ -404,7 +413,9 @@ class SpeciesBatchedLoader:
         if not self.fixed_cell:
             raise NotImplementedError("Non-fixed cell handling is not implemented yet.")
 
-        self.handler = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
+        self.handler = znh5md.IO(
+            self.file, variable_shape=False, include=["position", "box"]
+        )
         if self.memory:
             log.info(f"Loading {self.file} into memory ...")
             self.handler = self.handler[self.start : self.stop : self.step]
@@ -423,7 +434,9 @@ class SpeciesBatchedLoader:
         self.inv_cell = jnp.linalg.inv(self.cell)
         self.masses = jnp.array(self.first_frame_atoms.get_masses())
 
-        log.info(f"Grouping species into batches where atom count <= {self.batch_size}...")
+        log.info(
+            f"Grouping species into batches where atom count <= {self.batch_size}..."
+        )
         self.indices = _get_indices(self.first_frame_atoms, self.structures)
         self.species_batches = []
         for structure, all_mols in self.indices.items():
@@ -440,7 +453,9 @@ class SpeciesBatchedLoader:
                 current_atom_count += atoms_per_mol
             if current_batch:
                 self.species_batches.append((structure, jnp.array(current_batch)))
-        log.info(f"Initialized loader with {len(self.species_batches)} total species batches.")
+        log.info(
+            f"Initialized loader with {len(self.species_batches)} total species batches."
+        )
 
     def __len__(self):
         if not hasattr(self, "species_batches"):
@@ -458,14 +473,16 @@ class SpeciesBatchedLoader:
             raise StopIteration
 
         atom_indices_flat = mol_indices_array.flatten()
-        
+
         sliced_frames = self.handler[self.start : self.stop : self.step]
         raw_positions = jnp.array(
             [frame.get_positions()[atom_indices_flat] for frame in sliced_frames]
         )
 
         # Unwrap the full trajectory slice for this species using the image flag method
-        unwrapped_pos = unwrap_trajectory_image_flags(raw_positions, self.cell, self.inv_cell)
+        unwrapped_pos = unwrap_trajectory_image_flags(
+            raw_positions, self.cell, self.inv_cell
+        )
 
         if not self.com:
             pos = unwrapped_pos

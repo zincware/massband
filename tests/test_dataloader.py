@@ -55,6 +55,7 @@ def test_TimeBatchedLoader_batch_size(wrap, structures):
                 f"Not equal: {mismatch_str}"
             )
 
+
 @pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
 @pytest.mark.parametrize("wrap", [True, False])
 def test_SpeciesBatchedLoader_batch_size(wrap, structures):
