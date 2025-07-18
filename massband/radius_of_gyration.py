@@ -10,6 +10,7 @@ from tqdm import tqdm
 from massband.abc import ComparisonResults
 from massband.dataloader import TimeBatchedLoader
 from collections import defaultdict
+import ase.io
 
 
 class RadiusOfGyration(zntrack.Node):
@@ -20,6 +21,8 @@ class RadiusOfGyration(zntrack.Node):
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
     results: dict = zntrack.metrics()
     data: dict = zntrack.outs()
+
+    traj: Path = zntrack.outs_path(zntrack.nwd / "traj")
 
     def run(self) -> None:
         dl = TimeBatchedLoader(
@@ -35,18 +38,25 @@ class RadiusOfGyration(zntrack.Node):
         results = defaultdict(list)
         masses_array = jnp.array(dl.masses)
 
+        self.traj.mkdir(parents=True, exist_ok=True)
+        atoms_buffer = defaultdict(list)  # Collect strings to write per molecule type
+
         for (pos, _, _) in tqdm(dl, desc="Calculating Radius of Gyration"):
             for key in pos:
                 # Get indices for all molecules of this type, shape: (n_mols, n_atoms_in_mol)
+                 # these are wrong! They are not for the wrapped positions, but they are for the original positions
                 mol_indices = jnp.array(dl.indices[key])
-                if mol_indices.ndim == 1: # Handle case of a single molecule
-                    mol_indices = mol_indices[None, :]
-
                 # Get atom positions for all molecules, shape: (batch, n_mols, n_atoms, 3)
-                molecule_positions = pos[key][:, mol_indices]
-                
+                molecule_positions = pos[key]
                 # Get masses, shape: (n_mols, n_atoms_in_mol)
                 molecule_masses = masses_array[mol_indices]
+                # molecule_masses = molecule_masses.reshape(-1)
+                molecule_positions = molecule_positions.reshape(
+                    -1, *molecule_masses.shape, 3
+                )
+                # raise ValueError(molecule_masses.shape, molecule_positions.shape)
+
+                # print(f"Processing {key} with {molecule_positions.shape} frames and {molecule_positions.shape[1]} molecules")
 
                 # --- Vectorized Rg Calculation ---
                 # Total mass for each molecule, shape: (n_mols,)
@@ -78,6 +88,14 @@ class RadiusOfGyration(zntrack.Node):
 
 
         self.figures.mkdir(parents=True, exist_ok=True)
+        for key in atoms_buffer:
+            # Write the collected ASE Atoms objects to a file
+            ase.io.write(
+                self.traj / f"{key}.xyz",
+                atoms_buffer[key],
+                format="extxyz",
+                append=True,
+            )
 
         # --- Per-Molecule Analysis and Plotting ---
         # This will store the mean Rg time series for global analysis
