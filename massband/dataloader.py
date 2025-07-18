@@ -1,16 +1,18 @@
 import dataclasses
-from pathlib import Path
-import znh5md
-import rdkit2ase
-import typing as t
-import jax.numpy as jnp
-from jax import jit
 import logging
-import ase
+import typing as t
 from collections import defaultdict
+from pathlib import Path
+
+import ase
+import jax.numpy as jnp
+import rdkit2ase
+import znh5md
+from jax import jit
 
 log = logging.getLogger(__name__)
 # TODO: determine ideal batch size by chunk size in the h5 file
+
 
 @jit
 def unwrap_positions(
@@ -25,12 +27,16 @@ def unwrap_positions(
     pos_unwrapped = jnp.einsum("ij,faj->fai", cell, frac_unwrapped)
     return pos_unwrapped
 
+
 @jit
-def wrap_positions(pos: jnp.ndarray, cells: jnp.ndarray, inv_cells: jnp.ndarray) -> jnp.ndarray:
+def wrap_positions(
+    pos: jnp.ndarray, cells: jnp.ndarray, inv_cells: jnp.ndarray
+) -> jnp.ndarray:
     frac = jnp.einsum("ij,faj->fai", inv_cells, pos)
     frac_wrapped = frac % 1.0
     pos_wrapped = jnp.einsum("ij,faj->fai", cells, frac_wrapped)
     return pos_wrapped
+
 
 def _get_indices(
     frame: ase.Atoms,
@@ -57,11 +63,11 @@ def _get_indices(
 class TimeBatchedLoader:
     """
     A data loader for efficiently processing molecular dynamics trajectories in time-based batches.
-    
+
     This loader processes trajectory data frame-by-frame in batches, making it memory-efficient
     for large trajectories. It handles position unwrapping, center-of-mass calculations, and
     optional wrapping of coordinates back into the simulation box.
-    
+
     Parameters
     ----------
     file : Path | str
@@ -85,7 +91,7 @@ class TimeBatchedLoader:
         Ending frame index (exclusive). If None, processes to the end. Default is None.
     step : int, optional
         Frame step size. Default is 1.
-    
+
     Yields
     ------
     tuple[dict[str, jnp.ndarray], jnp.ndarray, jnp.ndarray]
@@ -97,11 +103,11 @@ class TimeBatchedLoader:
             Simulation cell matrix with shape (3, 3).
         - inv_cell : jnp.ndarray
             Inverse cell matrix with shape (3, 3).
-    
+
     Examples
     --------
     Load a trajectory and process in batches of 100 frames:
-    
+
     >>> loader = TimeBatchedLoader(
     ...     file="trajectory.h5",
     ...     batch_size=100,
@@ -109,16 +115,16 @@ class TimeBatchedLoader:
     ...     com=True,
     ...     wrap=True
     ... )
-    >>> 
+    >>>
     >>> for batch_data, cell, inv_cell in loader:
     ...     # batch_data["CCO"] has shape (100, n_ethanol_molecules, 3)
     ...     # batch_data["O"] has shape (100, n_water_molecules, 3)
     ...     ethanol_positions = batch_data["CCO"]
     ...     water_positions = batch_data["O"]
     ...     # Process the batch...
-    
+
     Process only atomic elements (no molecular grouping):
-    
+
     >>> loader = TimeBatchedLoader(
     ...     file="trajectory.h5",
     ...     batch_size=50,
@@ -126,13 +132,13 @@ class TimeBatchedLoader:
     ...     com=False,        # Don't calculate COM
     ...     wrap=False
     ... )
-    >>> 
+    >>>
     >>> for batch_data, cell, inv_cell in loader:
     ...     # batch_data["C"] has shape (50, n_carbon_atoms, 3)
     ...     # batch_data["O"] has shape (50, n_oxygen_atoms, 3)
     ...     carbon_positions = batch_data["C"]
     ...     oxygen_positions = batch_data["O"]
-    
+
     Notes
     -----
     - When `com=True` and `structures` is provided, positions represent center-of-mass
@@ -143,6 +149,7 @@ class TimeBatchedLoader:
     - For consistent results across different batch sizes, especially with `memory=True`,
       the loader uses global trajectory context for unwrapping calculations.
     """
+
     file: Path | str
     wrap: bool
     batch_size: int = 64
@@ -157,21 +164,27 @@ class TimeBatchedLoader:
     def __post_init__(self):
         if not self.fixed_cell:
             raise NotImplementedError("Non-fixed cell handling is not implemented yet.")
-        
-        self.handler = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
-        
+
+        self.handler = znh5md.IO(
+            self.file, variable_shape=False, include=["position", "box"]
+        )
+
         # Determine the effective stop index and total number of frames to be processed.
         effective_stop = self.stop if self.stop is not None else len(self.handler)
         self.total_frames = len(range(self.start, effective_stop, self.step))
 
         if self.total_frames == 0:
-            log.warning("The specified start, stop, and step result in zero frames to process.")
+            log.warning(
+                "The specified start, stop, and step result in zero frames to process."
+            )
             return
 
         # If using memory mode, perform one single, efficient slice operation to load data.
         if self.memory:
-            log.info(f"Loading {self.total_frames} frames into memory using slice [{self.start}:{self.stop}:{self.step}]...")
-            self.handler = self.handler[self.start:self.stop:self.step]
+            log.info(
+                f"Loading {self.total_frames} frames into memory using slice [{self.start}:{self.stop}:{self.step}]..."
+            )
+            self.handler = self.handler[self.start : self.stop : self.step]
             # After loading, treat the slice as a new trajectory with step=1 and start=0
             self.start = 0
             self.step = 1
@@ -185,31 +198,37 @@ class TimeBatchedLoader:
 
         # Initialize unwrapping reference and iterator state
         self.iter_offset = 0
-        self.last_processed_frame_positions = jnp.stack([self.first_frame_atoms.get_positions(), self.first_frame_atoms.get_positions()])
-        
+        self.last_processed_frame_positions = jnp.stack(
+            [
+                self.first_frame_atoms.get_positions(),
+                self.first_frame_atoms.get_positions(),
+            ]
+        )
+
         log.info(f"Initialized loader for {self.total_frames} frames from {self.file}")
 
     def __len__(self):
-        if not hasattr(self, 'total_frames'): return 0
+        if not hasattr(self, "total_frames"):
+            return 0
         return (self.total_frames + self.batch_size - 1) // self.batch_size
 
     def __iter__(self):
         self.iter_offset = 0
         return self
-    
+
     def __next__(self) -> t.Tuple[dict[str, jnp.ndarray], jnp.ndarray, jnp.ndarray]:
-        if not hasattr(self, 'total_frames') or self.iter_offset >= self.total_frames:
+        if not hasattr(self, "total_frames") or self.iter_offset >= self.total_frames:
             raise StopIteration
-        
+
         # --- BATCH SLICING LOGIC ---
         # Determine how many frames are in this batch
         frames_in_batch = min(self.batch_size, self.total_frames - self.iter_offset)
-        
+
         # Calculate the start, stop, and step for this specific batch slice
         slice_start = self.start + self.iter_offset * self.step
         slice_stop = slice_start + frames_in_batch * self.step
         slice_step = self.step
-        
+
         # Perform a single, efficient slice operation
         batch = self.handler[slice_start:slice_stop:slice_step]
         # --- END BATCH SLICING LOGIC ---
@@ -224,7 +243,7 @@ class TimeBatchedLoader:
         unwrap_pos = unwrap_positions(
             positions, self.first_frame_cell, self.first_frame_inv_cell
         )
-        
+
         unwrap_pos = unwrap_pos[2:]
         self.last_processed_frame_positions = jnp.stack(
             [self.first_frame_atoms.get_positions(), unwrap_pos[-1]]
@@ -239,33 +258,36 @@ class TimeBatchedLoader:
             if not self.com:
                 atom_indices = mol_indices_array.flatten()
                 data[structure] = unwrap_pos[:, atom_indices, :]
-            else:                
+            else:
                 mol_positions = unwrap_pos[:, mol_indices_array, :]
                 masses = self.masses[mol_indices_array]
                 total_mol_mass = jnp.sum(masses, axis=1)
                 numerator = jnp.sum(mol_positions * masses[None, :, :, None], axis=2)
                 com = numerator / total_mol_mass[None, :, None]
                 data[structure] = com
-        
+
         results = {}
         for structure, pos in data.items():
             if self.wrap:
-                pos = wrap_positions(pos, self.first_frame_cell, self.first_frame_inv_cell)
+                pos = wrap_positions(
+                    pos, self.first_frame_cell, self.first_frame_inv_cell
+                )
             results[structure] = pos
 
         self.iter_offset += frames_in_batch
 
         return results, self.first_frame_cell, self.first_frame_inv_cell
 
+
 @dataclasses.dataclass
 class SpeciesBatchedLoader:
     """
     A data loader that batches trajectory data by molecular species or substructures.
-    
+
     This loader groups atoms/molecules by species and processes them in batches based on
     atom count limits. It loads the full trajectory for each species batch, making it
     efficient for analyses that need all temporal data for specific molecular species.
-    
+
     Parameters
     ----------
     file : Path | str
@@ -290,7 +312,7 @@ class SpeciesBatchedLoader:
         Frame step size. Default is 1.
     memory : bool, optional
         Whether to load the entire trajectory into memory for faster access. Default is False.
-    
+
     Yields
     ------
     tuple[dict[str, jnp.ndarray], jnp.ndarray, jnp.ndarray]
@@ -303,11 +325,11 @@ class SpeciesBatchedLoader:
             Simulation cell matrix with shape (3, 3).
         - inv_cell : jnp.ndarray
             Inverse cell matrix with shape (3, 3).
-    
+
     Examples
     --------
     Process molecular species in batches with atom count limit:
-    
+
     >>> loader = SpeciesBatchedLoader(
     ...     file="trajectory.h5",
     ...     batch_size=100,  # Max 100 atoms per batch
@@ -315,15 +337,15 @@ class SpeciesBatchedLoader:
     ...     com=True,
     ...     wrap=True
     ... )
-    >>> 
+    >>>
     >>> for batch_data, cell, inv_cell in loader:
     ...     for species, positions in batch_data.items():
     ...         # positions has shape (n_frames, n_molecules_in_batch, 3)
     ...         print(f"{species}: {positions.shape}")
     ...         # Process all temporal data for this species batch...
-    
+
     Process by atomic elements with full trajectory for each batch:
-    
+
     >>> loader = SpeciesBatchedLoader(
     ...     file="trajectory.h5",
     ...     batch_size=50,   # Max 50 atoms per batch
@@ -331,12 +353,12 @@ class SpeciesBatchedLoader:
     ...     com=False,       # Individual atom coordinates
     ...     wrap=False
     ... )
-    >>> 
+    >>>
     >>> for batch_data, cell, inv_cell in loader:
     ...     for element, positions in batch_data.items():
     ...         # positions has shape (n_frames, n_atoms_in_batch, 3)
     ...         print(f"{element}: {positions.shape}")
-    
+
     Notes
     -----
     - This loader processes the full trajectory for each species batch, making it
@@ -350,6 +372,7 @@ class SpeciesBatchedLoader:
     - Memory usage scales with trajectory length × atoms per batch, making it less
       memory-efficient than TimeBatchedLoader for very long trajectories.
     """
+
     file: Path | str
     wrap: bool
     batch_size: int = 64
@@ -369,16 +392,20 @@ class SpeciesBatchedLoader:
         if not self.fixed_cell:
             raise NotImplementedError("Non-fixed cell handling is not implemented yet.")
 
-        self.handler = znh5md.IO(self.file, variable_shape=False, include=["position", "box"])
+        self.handler = znh5md.IO(
+            self.file, variable_shape=False, include=["position", "box"]
+        )
         if self.memory:
             log.info(f"Loading {self.file} into memory ...")
-            self.handler = self.handler[:] # TODO use start, stop, step here
-        
+            self.handler = self.handler[:]  # TODO use start, stop, step here
+
         effective_stop = self.stop if self.stop is not None else len(self.handler)
         self.total_frames = len(range(self.start, effective_stop, self.step))
 
         if self.total_frames == 0:
-            log.warning("The specified start, stop, and step result in zero frames to process.")
+            log.warning(
+                "The specified start, stop, and step result in zero frames to process."
+            )
             self.species_batches = []
             return
 
@@ -387,36 +414,41 @@ class SpeciesBatchedLoader:
         self.cell = jnp.array(self.first_frame_atoms.get_cell()[:])
         self.inv_cell = jnp.linalg.inv(self.cell)
         self.masses = jnp.array(self.first_frame_atoms.get_masses())
-        
+
         # --- Prepare Species Batches (without loading data) ---
-        log.info(f"Grouping species into batches where atom count <= {self.batch_size}...")
+        log.info(
+            f"Grouping species into batches where atom count <= {self.batch_size}..."
+        )
         self.indices = _get_indices(self.first_frame_atoms, self.structures)
         self.species_batches = []
         for structure, all_mols in self.indices.items():
             if not all_mols:
                 continue
-            
+
             atoms_per_mol = len(all_mols[0])
             current_batch = []
             current_atom_count = 0
-            
+
             for mol_indices in all_mols:
                 if current_atom_count + atoms_per_mol > self.batch_size and current_batch:
                     self.species_batches.append((structure, jnp.array(current_batch)))
                     current_batch = []
                     current_atom_count = 0
-                
+
                 current_batch.append(mol_indices)
                 current_atom_count += atoms_per_mol
-            
+
             if current_batch:
                 self.species_batches.append((structure, jnp.array(current_batch)))
-        
-        log.info(f"Initialized loader with {len(self.species_batches)} total species batches.")
+
+        log.info(
+            f"Initialized loader with {len(self.species_batches)} total species batches."
+        )
 
     def __len__(self):
         """Returns the total number of species-based batches."""
-        if not hasattr(self, 'species_batches'): return 0
+        if not hasattr(self, "species_batches"):
+            return 0
         return len(self.species_batches)
 
     def __iter__(self):
@@ -436,15 +468,17 @@ class SpeciesBatchedLoader:
         # --- Lazy Loading and Unwrapping ---
         # 1. Get the flat list of atom indices for this batch
         atom_indices_flat = mol_indices_array.flatten()
-        
+
         # 2. Load only the required positions for these atoms over the specified time slice
-        sliced_frames = self.handler[self.start:self.stop:self.step]
-        raw_positions_list = [self.first_frame_atoms.get_positions()[atom_indices_flat]] + [frame.get_positions()[atom_indices_flat] for frame in sliced_frames[1:]]
+        sliced_frames = self.handler[self.start : self.stop : self.step]
+        raw_positions_list = [
+            self.first_frame_atoms.get_positions()[atom_indices_flat]
+        ] + [frame.get_positions()[atom_indices_flat] for frame in sliced_frames[1:]]
         raw_positions = jnp.array(raw_positions_list)
 
         # 3. Unwrap the positions for this subset of atoms
         unwrapped_pos = unwrap_positions(raw_positions, self.cell, self.inv_cell)
-        
+
         # --- Process Batch ---
         if not self.com:
             # If not calculating COM, the result is simply the unwrapped atom positions
@@ -454,18 +488,20 @@ class SpeciesBatchedLoader:
             # Reshape positions to (frames, mols, atoms_per_mol, 3) for COM calculation
             n_mols_in_batch = mol_indices_array.shape[0]
             n_atoms_per_mol = mol_indices_array.shape[1]
-            mol_positions = unwrapped_pos.reshape(self.total_frames, n_mols_in_batch, n_atoms_per_mol, 3)
+            mol_positions = unwrapped_pos.reshape(
+                self.total_frames, n_mols_in_batch, n_atoms_per_mol, 3
+            )
 
             # Calculate Center of Mass trajectories
             masses = self.masses[mol_indices_array]
             total_mol_mass = jnp.sum(masses, axis=1)
             numerator = jnp.sum(mol_positions * masses[None, :, :, None], axis=2)
             pos = numerator / total_mol_mass[None, :, None]
-        
+
         # Optionally wrap the final positions
         if self.wrap:
             pos = wrap_positions(pos, self.cell, self.inv_cell)
-        
+
         results = {structure: pos}
 
         return results, self.cell, self.inv_cell

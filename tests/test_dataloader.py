@@ -1,9 +1,11 @@
-from massband.dataloader import SpeciesBatchedLoader, TimeBatchedLoader
-from pathlib import Path
-import jax.numpy as jnp
 from collections import defaultdict
 from itertools import combinations
+from pathlib import Path
+
+import jax.numpy as jnp
 import pytest
+
+from massband.dataloader import SpeciesBatchedLoader, TimeBatchedLoader
 
 # TODO: use a trajectory with very fast diffusion, e.g. via vectra
 # TODO: the trajectory must be wrapped for the test to make sen
@@ -11,7 +13,6 @@ import pytest
 BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
 
 
-@pytest.mark.skip
 @pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
 @pytest.mark.parametrize("wrap", [True, False])
 def test_TimeBatchedLoader_batch_size(wrap, structures):
@@ -45,7 +46,7 @@ def test_TimeBatchedLoader_batch_size(wrap, structures):
         for a, b in combinations(batch_sizes, 2):
             equal = jnp.allclose(data[a][species], data[b][species], atol=tolerance)
             (matches if equal else mismatches).append((a, b))
-        
+
         if mismatches:
             match_str = ", ".join(f"{x}=={y}" for x, y in matches) or "none"
             mismatch_str = ", ".join(f"{x}!={y}" for x, y in mismatches)
@@ -55,7 +56,7 @@ def test_TimeBatchedLoader_batch_size(wrap, structures):
                 f"Not equal: {mismatch_str}"
             )
 
-@pytest.mark.skip
+
 @pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
 @pytest.mark.parametrize("wrap", [True, False])
 def test_SpeciesBatchedLoader_batch_size(wrap, structures):
@@ -89,7 +90,7 @@ def test_SpeciesBatchedLoader_batch_size(wrap, structures):
         for a, b in combinations(batch_sizes, 2):
             equal = jnp.allclose(data[a][species], data[b][species], atol=tolerance)
             (matches if equal else mismatches).append((a, b))
-        
+
         if mismatches:
             match_str = ", ".join(f"{x}=={y}" for x, y in matches) or "none"
             mismatch_str = ", ".join(f"{x}!={y}" for x, y in mismatches)
