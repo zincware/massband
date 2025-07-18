@@ -26,7 +26,6 @@ def test_TimeBatchedLoader_batch_size(wrap, structures):
             wrap=wrap,
             memory=True,
             batch_size=batch_size,
-            stop=100,
         )
         results = defaultdict(list)
         for batch, _, _ in tbdl:
@@ -56,7 +55,6 @@ def test_TimeBatchedLoader_batch_size(wrap, structures):
                 f"Not equal: {mismatch_str}"
             )
 
-
 @pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
 @pytest.mark.parametrize("wrap", [True, False])
 def test_SpeciesBatchedLoader_batch_size(wrap, structures):
@@ -70,7 +68,6 @@ def test_SpeciesBatchedLoader_batch_size(wrap, structures):
             wrap=wrap,
             memory=True,
             batch_size=batch_size,
-            stop=100,
         )
         results = defaultdict(list)
         for batch, _, _ in sbdl:
@@ -110,7 +107,6 @@ def test_species_equals_time(tbdl_batch_size, sbdl_batch_size):
         wrap=False,
         memory=True,
         batch_size=tbdl_batch_size,
-        # stop=100,
     )
     sbdl = SpeciesBatchedLoader(
         file=BMIM_BF4_FILE,
@@ -118,7 +114,6 @@ def test_species_equals_time(tbdl_batch_size, sbdl_batch_size):
         wrap=False,
         memory=True,
         batch_size=sbdl_batch_size,
-        # stop=100,
     )
 
     tbdl_data = defaultdict(list)
