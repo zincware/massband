@@ -208,9 +208,6 @@ class RadialDistributionFunction(zntrack.Node):
         # Add safety checks for max_distance
         if not jnp.isfinite(max_distance) or max_distance <= 0:
             raise ValueError(f"Invalid max_distance: {max_distance}. Check cell dimensions.")
-            
-        # Limit max_distance to a reasonable value to prevent too many bins
-        max_distance = min(max_distance, 50.0)  # Cap at 50 Å
         
         log.info(f"Using max_distance = {max_distance:.2f} Å with bin_width = {self.bin_width}")
 
@@ -288,6 +285,7 @@ class RadialDistributionFunction(zntrack.Node):
         self.figures.mkdir(exist_ok=True, parents=True)
 
         log.info("Creating RDF plots")
+        # TODO: something is wrong with the bin_edges!
         plot_rdf(
             self.results,
             self.figures / "rdf.png",
