@@ -10,6 +10,8 @@ import plotly.graph_objects as go
 import zntrack
 from ase import Atoms
 from kinisi.analyze import DiffusionAnalyzer
+from tqdm import tqdm
+from collections import defaultdict
 
 from massband.abc import ComparisonResults
 from massband.dataloader import SpeciesBatchedLoader
@@ -61,43 +63,56 @@ class KinisiSelfDiffusion(zntrack.Node):
             batch_size=self.batch_size,
             wrap=False,
             com=True,  # Use center of mass for molecular structures
-            memory=False,  # Don't load all into memory
+            memory=True,  # Don't load all into memory
             start=self.start,
             stop=self.stop,
             step=self.step
         )
-        
-        current_species = None
-        accumulated_positions = []
-        
-        # Iterate through all batches
-        for batch_data, _, _ in loader:
+
+        results = list(tqdm(loader))
+        data = defaultdict(list)
+        for batch_data, _, _ in results:
             for species_name, positions in batch_data.items():
-                # Check if we've moved to a new species
-                if current_species is None:
-                    # First species
-                    current_species = species_name
-                    accumulated_positions = [positions]
-                elif species_name != current_species:
-                    # New species detected - yield the previous species data
-                    if accumulated_positions:
-                        combined_positions = np.concatenate(accumulated_positions, axis=1)
-                        log.info(f"Yielding complete data for species {current_species} with shape {combined_positions.shape}")
-                        yield current_species, combined_positions
-                    
-                    # Start accumulating for new species
-                    current_species = species_name
-                    accumulated_positions = [positions]
-                else:
-                    # Same species - accumulate positions
-                    # different shapes with com / not com
-                    accumulated_positions.append(positions)
+                # Accumulate positions for each species
+                data[species_name].append(positions)
         
-        # Yield the last species if we have data
-        if current_species is not None and accumulated_positions:
-            combined_positions = np.concatenate(accumulated_positions, axis=0)
-            log.info(f"Yielding final species {current_species} with shape {combined_positions.shape}")
-            yield current_species, combined_positions
+        for species_name, positions_list in data.items():
+            # Concatenate all positions for this species
+            combined_positions = np.concatenate(positions_list, axis=1)
+            log.info(f"Yielding complete data for species {species_name} with shape {combined_positions.shape}")
+            yield species_name, combined_positions
+
+        
+        
+        # # Iterate through all batches
+        # for batch_data, _, _ in tqdm(loader):
+        #     # TODO: This musn't work because the species are not guaranteed to be in the same order
+        #     for species_name, positions in batch_data.items():
+        #         # Check if we've moved to a new species
+        #         if current_species is None:
+        #             # First species
+        #             current_species = species_name
+        #             accumulated_positions = [positions]
+        #         elif species_name != current_species:
+        #             # New species detected - yield the previous species data
+        #             if accumulated_positions:
+        #                 combined_positions = np.concatenate(accumulated_positions, axis=1)
+        #                 log.info(f"Yielding complete data for species {current_species} with shape {combined_positions.shape}")
+        #                 yield current_species, combined_positions
+                    
+        #             # Start accumulating for new species
+        #             current_species = species_name
+        #             accumulated_positions = [positions]
+        #         else:
+        #             # Same species - accumulate positions
+        #             # different shapes with com / not com
+        #             accumulated_positions.append(positions)
+        
+        # # Yield the last species if we have data
+        # if current_species is not None and accumulated_positions:
+        #     combined_positions = np.concatenate(accumulated_positions, axis=0)
+        #     log.info(f"Yielding final species {current_species} with shape {combined_positions.shape}")
+        #     yield current_species, combined_positions
 
     def run(self):
         np.random.seed(self.seed)
