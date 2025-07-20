@@ -10,18 +10,15 @@ from massband.dataloader import SpeciesBatchedLoader, TimeBatchedLoader
 # TODO: use a trajectory with very fast diffusion, e.g. via vectra
 # TODO: the trajectory must be wrapped for the test to make sen
 
-BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
-
-
 @pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
 @pytest.mark.parametrize("wrap", [True, False])
-def test_TimeBatchedLoader_batch_size(wrap, structures):
+def test_TimeBatchedLoader_batch_size(wrap, structures, bmim_bf4_vectra):
     batch_sizes = [1, 2, 3, 4, 512]
     data = {}
 
     for batch_size in batch_sizes:
         tbdl = TimeBatchedLoader(
-            file=BMIM_BF4_FILE,
+            file=bmim_bf4_vectra,
             structures=structures,
             wrap=wrap,
             memory=True,
@@ -58,13 +55,13 @@ def test_TimeBatchedLoader_batch_size(wrap, structures):
 
 @pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
 @pytest.mark.parametrize("wrap", [True, False])
-def test_SpeciesBatchedLoader_batch_size(wrap, structures):
+def test_SpeciesBatchedLoader_batch_size(wrap, structures, bmim_bf4_vectra):
     batch_sizes = [1, 2, 3, 4, 512]
     data = {}
 
     for batch_size in batch_sizes:
         sbdl = SpeciesBatchedLoader(
-            file=BMIM_BF4_FILE,
+            file=bmim_bf4_vectra,
             structures=structures,
             wrap=wrap,
             memory=True,
@@ -101,16 +98,16 @@ def test_SpeciesBatchedLoader_batch_size(wrap, structures):
 
 @pytest.mark.parametrize("tbdl_batch_size", [1, 2, 4, 8])
 @pytest.mark.parametrize("sbdl_batch_size", [1, 2, 4, 8])
-def test_species_equals_time(tbdl_batch_size, sbdl_batch_size):
+def test_species_equals_time(tbdl_batch_size, sbdl_batch_size, bmim_bf4_vectra):
     tbdl = TimeBatchedLoader(
-        file=BMIM_BF4_FILE,
+        file=bmim_bf4_vectra,
         structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
         wrap=False,
         memory=True,
         batch_size=tbdl_batch_size,
     )
     sbdl = SpeciesBatchedLoader(
-        file=BMIM_BF4_FILE,
+        file=bmim_bf4_vectra,
         structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
         wrap=False,
         memory=True,
