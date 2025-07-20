@@ -5,13 +5,11 @@ import numpy as np
 
 from massband.rdf import RadialDistributionFunction
 
-BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
 
-
-def test_rdf_node_smiles(tmp_path):
+def test_rdf_node_smiles(tmp_path, bmim_bf4_vectra):
     os.chdir(tmp_path)
     node = RadialDistributionFunction(
-        file=BMIM_BF4_FILE,
+        file=bmim_bf4_vectra,
         batch_size=5,
         structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
     )
@@ -24,10 +22,10 @@ def test_rdf_node_smiles(tmp_path):
     assert (node.figures / "rdf.png").exists()
 
 
-def test_rdf_node_full(tmp_path):
+def test_rdf_node_full(tmp_path, bmim_bf4_vectra):
     os.chdir(tmp_path)
     node = RadialDistributionFunction(
-        file=BMIM_BF4_FILE,
+        file=bmim_bf4_vectra,
         batch_size=5,
         structures=None,
     )
@@ -56,10 +54,10 @@ def test_rdf_node_full(tmp_path):
     assert len(node.results) == 15
 
 
-def test_rdf_hh_goes_to_one(tmp_path):
+def test_rdf_hh_goes_to_one(tmp_path, bmim_bf4_vectra):
     os.chdir(tmp_path)
     node = RadialDistributionFunction(
-        file=BMIM_BF4_FILE,
+        file=bmim_bf4_vectra,
         batch_size=5,
         structures=None,
     )
