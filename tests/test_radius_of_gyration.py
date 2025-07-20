@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 import pytest
 
@@ -9,7 +8,9 @@ import massband
 def test_radius_of_gyration_node(tmp_path, bmim_bf4_vectra):
     """Test the RadiusOfGyration node."""
     os.chdir(tmp_path)
-    node = massband.RadiusOfGyration(file=bmim_bf4_vectra, structures=["CCCCN1[CH-][CH+]N(C)[CH-]1", "F[B-](F)(F)F"])
+    node = massband.RadiusOfGyration(
+        file=bmim_bf4_vectra, structures=["CCCCN1[CH-][CH+]N(C)[CH-]1", "F[B-](F)(F)F"]
+    )
     node.run()
 
     bmim_results = node.results["CCCCN1[CH-][CH+]N(C)[CH-]1"]

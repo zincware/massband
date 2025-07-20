@@ -1,5 +1,6 @@
 import logging
 import pickle
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, TypedDict, Union
@@ -11,7 +12,6 @@ import zntrack
 from ase import Atoms
 from kinisi.analyze import DiffusionAnalyzer
 from tqdm import tqdm
-from collections import defaultdict
 
 from massband.abc import ComparisonResults
 from massband.dataloader import SpeciesBatchedLoader
@@ -66,7 +66,7 @@ class KinisiSelfDiffusion(zntrack.Node):
             memory=True,  # Don't load all into memory
             start=self.start,
             stop=self.stop,
-            step=self.step
+            step=self.step,
         )
 
         results = list(tqdm(loader))
@@ -75,18 +75,18 @@ class KinisiSelfDiffusion(zntrack.Node):
             for species_name, positions in batch_data.items():
                 # Accumulate positions for each species
                 data[species_name].append(positions)
-        
+
         for species_name, positions_list in data.items():
             # Concatenate all positions for this species
             combined_positions = np.concatenate(positions_list, axis=1)
-            log.info(f"Yielding complete data for species {species_name} with shape {combined_positions.shape}")
+            log.info(
+                f"Yielding complete data for species {species_name} with shape {combined_positions.shape}"
+            )
             yield species_name, combined_positions
 
-        
-        
         # # Iterate through all batches
         # for batch_data, _, _ in tqdm(loader):
-        #     # TODO: This musn't work because the species are not guaranteed to be in the same order
+        #     # TODO: This mustn't work because the species are not guaranteed to be in the same order
         #     for species_name, positions in batch_data.items():
         #         # Check if we've moved to a new species
         #         if current_species is None:
@@ -99,7 +99,7 @@ class KinisiSelfDiffusion(zntrack.Node):
         #                 combined_positions = np.concatenate(accumulated_positions, axis=1)
         #                 log.info(f"Yielding complete data for species {current_species} with shape {combined_positions.shape}")
         #                 yield current_species, combined_positions
-                    
+
         #             # Start accumulating for new species
         #             current_species = species_name
         #             accumulated_positions = [positions]
@@ -107,7 +107,7 @@ class KinisiSelfDiffusion(zntrack.Node):
         #             # Same species - accumulate positions
         #             # different shapes with com / not com
         #             accumulated_positions.append(positions)
-        
+
         # # Yield the last species if we have data
         # if current_species is not None and accumulated_positions:
         #     combined_positions = np.concatenate(accumulated_positions, axis=0)
@@ -118,34 +118,34 @@ class KinisiSelfDiffusion(zntrack.Node):
         np.random.seed(self.seed)
         self.results = {}
         self.data_path.mkdir(exist_ok=True, parents=True)
-        
+
         # Account for step in the effective time step
         effective_time_step = self.time_step / 1000 * self.step
-        
+
         # Process each species individually
         for species_name, positions in self.process_species_batches():
             log.info(f"Processing diffusion analysis for {species_name}")
-            
+
             # positions shape: (n_frames, n_molecules, 3)
-            n_frames, n_molecules, _ = positions.shape            
+            n_frames, n_molecules, _ = positions.shape
             # Create ASE Atoms objects for each frame
             # Since we're working with COM positions, we treat each as a single atom
             frames = []
             for frame_idx in range(n_frames):
                 frame_positions = positions[frame_idx]  # Shape: (n_molecules, 3)
-                
+
                 # Create atoms object with dummy atomic numbers (e.g., all as hydrogen)
                 atoms = Atoms(
-                    symbols=['H'] * n_molecules,
+                    symbols=["H"] * n_molecules,
                     positions=frame_positions,
                     pbc=False,
-                    cell=[100000, 1000000, 100000], # required for kinisi to work
+                    cell=[100000, 1000000, 100000],  # required for kinisi to work
                 )
                 frames.append(atoms)
-            
+
             # For COM positions, each "molecule" is treated as a single entity
             occurrences = n_molecules
-            
+
             try:
                 diff = DiffusionAnalyzer.from_ase(
                     frames,
@@ -158,7 +158,7 @@ class KinisiSelfDiffusion(zntrack.Node):
                     uncertainty_params={"progress": True},
                 )
                 diff.diffusion(self.start_dt, {"progress": True})
-                
+
                 result = DiffusionPlotData(
                     structure=species_name,
                     dt=np.asarray(diff.dt),
@@ -168,20 +168,20 @@ class KinisiSelfDiffusion(zntrack.Node):
                     D_samples=np.asarray(diff.D.samples),
                     D_n=float(diff.D.n),
                 )
-                
+
                 with open(self.data_path / f"{species_name}.pkl", "wb") as f:
                     pickle.dump(result, f)
-                
+
                 # Compute uncertainty statistics from D_samples
                 D_mean = result.D_n
                 D_std = np.std(result.D_samples)
                 ci68 = np.percentile(result.D_samples, [16, 84])
                 ci95 = np.percentile(result.D_samples, [2.5, 97.5])
-                
+
                 # Optional: asymmetric error bars
                 uncertainty_low = D_mean - ci68[0]
                 uncertainty_high = ci68[1] - D_mean
-                
+
                 # Store in results
                 self.results[species_name] = {
                     "diffusion_coefficient": result.D_n,
@@ -191,13 +191,15 @@ class KinisiSelfDiffusion(zntrack.Node):
                     "asymmetric_uncertainty": [uncertainty_low, uncertainty_high],
                     "occurrences": occurrences,
                 }
-                
-                log.info(f"Completed diffusion analysis for {species_name}: D = {D_mean:.3e} cm²/s")
-                
+
+                log.info(
+                    f"Completed diffusion analysis for {species_name}: D = {D_mean:.3e} cm²/s"
+                )
+
             except Exception as e:
                 log.error(f"Failed to process species {species_name}: {e}")
                 continue
-        
+
         self.plot()
 
     def plot(self):

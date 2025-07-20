@@ -1,16 +1,14 @@
+from collections import defaultdict
 from pathlib import Path
 
+import ase.io
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import networkx as nx
-import plotly.graph_objects as go
 import zntrack
 from scipy.signal import correlate
 from tqdm import tqdm
-from massband.abc import ComparisonResults
+
 from massband.dataloader import TimeBatchedLoader
-from collections import defaultdict
-import ase.io
 
 
 class RadiusOfGyration(zntrack.Node):
@@ -41,10 +39,10 @@ class RadiusOfGyration(zntrack.Node):
         self.traj.mkdir(parents=True, exist_ok=True)
         atoms_buffer = defaultdict(list)  # Collect strings to write per molecule type
 
-        for (pos, _, _) in tqdm(dl, desc="Calculating Radius of Gyration"):
+        for pos, _, _ in tqdm(dl, desc="Calculating Radius of Gyration"):
             for key in pos:
                 # Get indices for all molecules of this type, shape: (n_mols, n_atoms_in_mol)
-                 # these are wrong! They are not for the wrapped positions, but they are for the original positions
+                # these are wrong! They are not for the wrapped positions, but they are for the original positions
                 mol_indices = jnp.array(dl.indices[key])
                 # Get atom positions for all molecules, shape: (batch, n_mols, n_atoms, 3)
                 molecule_positions = pos[key]
@@ -64,9 +62,12 @@ class RadiusOfGyration(zntrack.Node):
 
                 # Center of mass for each molecule in each frame
                 # Shape: (batch, n_mols, 3)
-                center_of_mass = jnp.sum(
-                    molecule_masses[None, :, :, None] * molecule_positions, axis=2
-                ) / total_mass_per_mol[None, :, None]
+                center_of_mass = (
+                    jnp.sum(
+                        molecule_masses[None, :, :, None] * molecule_positions, axis=2
+                    )
+                    / total_mass_per_mol[None, :, None]
+                )
 
                 # Displacements from CoM, shape: (batch, n_mols, n_atoms, 3)
                 displacements = molecule_positions - center_of_mass[:, :, None, :]
@@ -80,12 +81,11 @@ class RadiusOfGyration(zntrack.Node):
                 )
 
                 rg_squared = sum_mass_weighted_sq_dist / total_mass_per_mol[None, :]
-                
+
                 # Final Rg for this batch, shape: (batch, n_mols)
                 rg = jnp.sqrt(rg_squared)
-                
-                results[key].append(rg)
 
+                results[key].append(rg)
 
         self.figures.mkdir(parents=True, exist_ok=True)
         for key in atoms_buffer:
@@ -109,7 +109,7 @@ class RadiusOfGyration(zntrack.Node):
             if not rg_values_list:
                 continue
             rg_values = jnp.concatenate(rg_values_list, axis=0)
-            
+
             num_molecules = rg_values.shape[1]
             num_molecules_per_type[smiles] = num_molecules
 
@@ -117,7 +117,7 @@ class RadiusOfGyration(zntrack.Node):
             # Mean and Std Dev at each frame, averaged across molecules (axis=1)
             mean_rg_per_frame = jnp.mean(rg_values, axis=1)
             std_rg_per_frame = jnp.std(rg_values, axis=1)
-            
+
             # Overall mean and std dev across all frames and all molecules
             overall_mean_rg = jnp.mean(rg_values)
             overall_std_rg = jnp.std(rg_values)
@@ -133,7 +133,7 @@ class RadiusOfGyration(zntrack.Node):
             self.data[smiles] = {
                 "rg_values": rg_values.flatten().tolist(),
             }
-            
+
             # 4. Create plots
             filename_smiles = "".join(c for c in smiles if c.isalnum())
 
@@ -173,7 +173,7 @@ class RadiusOfGyration(zntrack.Node):
             plt.xlabel("Lag (frames)")
             plt.ylabel("Autocorrelation")
             plt.title(f"Autocorrelation of Mean Rg: {smiles}")
-            plt.axhline(0, color='grey', linestyle='--', alpha=0.5)
+            plt.axhline(0, color="grey", linestyle="--", alpha=0.5)
             plt.grid(True, alpha=0.3)
             plt.savefig(self.figures / f"ac_rog_{filename_smiles}.png", dpi=300)
             plt.close()
@@ -183,7 +183,7 @@ class RadiusOfGyration(zntrack.Node):
             # Calculate a weighted average of the mean Rg time series
             total_weighted_rg_sum = 0
             total_molecules = 0
-            
+
             # Use the shortest trajectory length for consistent array shapes
             min_frames = min(len(ts) for ts in mean_rg_timeseries_all_types.values())
 
@@ -191,12 +191,12 @@ class RadiusOfGyration(zntrack.Node):
                 num_mols = num_molecules_per_type[smiles]
                 total_weighted_rg_sum += timeseries[:min_frames] * num_mols
                 total_molecules += num_mols
-            
+
             global_mean_rg_per_frame = total_weighted_rg_sum / total_molecules
-            
+
             # Calculate overall global mean and std from all flattened data
             all_rg_values_flat = jnp.concatenate(
-                [jnp.array(self.data[smiles]['rg_values']) for smiles in self.data]
+                [jnp.array(self.data[smiles]["rg_values"]) for smiles in self.data]
             )
             global_mean = jnp.mean(all_rg_values_flat)
             global_std = jnp.std(all_rg_values_flat)
@@ -209,7 +209,11 @@ class RadiusOfGyration(zntrack.Node):
             # Plot the global weighted-average time series
             plt.figure(figsize=(10, 6))
             x_frames_global = jnp.arange(len(global_mean_rg_per_frame))
-            plt.plot(x_frames_global, global_mean_rg_per_frame, label="Global Mean RG (Weighted)")
+            plt.plot(
+                x_frames_global,
+                global_mean_rg_per_frame,
+                label="Global Mean RG (Weighted)",
+            )
             plt.xlabel("Frame")
             plt.ylabel("Radius of Gyration (Å)")
             plt.title("Global Mean Radius of Gyration (Weighted by Molecule Count)")
@@ -218,11 +222,9 @@ class RadiusOfGyration(zntrack.Node):
             plt.savefig(self.figures / "global_rog.png", dpi=300)
             plt.close()
 
-
     def _autocorrelation(self, x: jnp.ndarray) -> jnp.ndarray:
         x = x - jnp.mean(x)
         result = correlate(x, x, mode="full")
         result = result[result.size // 2 :]
         result = result / result[0]
         return result
-

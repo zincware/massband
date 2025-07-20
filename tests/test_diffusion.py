@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 import pytest
 
@@ -43,4 +42,3 @@ def test_KinisiSelfDiffusion(tmp_path, bmim_bf4_vectra):
     assert bf4_results["asymmetric_uncertainty"] == pytest.approx(
         [4.85219e-07, 4.98712e-07], rel=0.1
     )
-

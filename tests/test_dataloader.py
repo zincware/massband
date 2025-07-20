@@ -1,6 +1,5 @@
 from collections import defaultdict
 from itertools import combinations
-from pathlib import Path
 
 import jax.numpy as jnp
 import pytest
@@ -9,6 +8,7 @@ from massband.dataloader import SpeciesBatchedLoader, TimeBatchedLoader
 
 # TODO: use a trajectory with very fast diffusion, e.g. via vectra
 # TODO: the trajectory must be wrapped for the test to make sen
+
 
 @pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
 @pytest.mark.parametrize("wrap", [True, False])

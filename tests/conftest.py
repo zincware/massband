@@ -1,7 +1,9 @@
-import pytest
 from pathlib import Path
 
+import pytest
+
 BMIM_BF4_VECTRA = (Path(__file__).parent.parent / "data" / "bmim_bf4_vectra.h5").resolve()
+
 
 @pytest.fixture
 def bmim_bf4_vectra():
