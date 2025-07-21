@@ -10,7 +10,9 @@ import numpy as np
 import plotly.graph_objects as go
 import zntrack
 from ase import Atoms
-from kinisi.analyze import DiffusionAnalyzer
+# from kinisi.analyze import DiffusionAnalyzer
+from kinisi.parser import ASEParser
+from kinisi.diffusion import MSDBootstrap
 from tqdm import tqdm
 
 from massband.abc import ComparisonResults
@@ -136,7 +138,7 @@ class KinisiSelfDiffusion(zntrack.Node):
 
                 # Create atoms object with dummy atomic numbers (e.g., all as hydrogen)
                 atoms = Atoms(
-                    symbols=["H"] * n_molecules,
+                    # symbols=["H"] * n_molecules,
                     positions=frame_positions,
                     pbc=False,
                     cell=[100000, 1000000, 100000],  # required for kinisi to work
@@ -147,24 +149,30 @@ class KinisiSelfDiffusion(zntrack.Node):
             occurrences = n_molecules
 
             try:
-                diff = DiffusionAnalyzer.from_ase(
-                    frames,
-                    parser_params={
-                        "specie": "H",
-                        "time_step": effective_time_step,
-                        "step_skip": self.sampling_rate,
-                        "progress": True,
-                    },
-                    uncertainty_params={"progress": True},
+                # diff = DiffusionAnalyzer.from_ase(
+                #     frames,
+                #     parser_params={
+                #         "specie": "H",
+                #         "time_step": effective_time_step,
+                #         "step_skip": self.sampling_rate,
+                #         "progress": True,
+                #     },
+                #     uncertainty_params={"progress": True},
+                # )
+                # diff.diffusion(self.start_dt, {"progress": True})
+                diff = ASEParser(
+                    atoms=frames, specie="X", time_step=effective_time_step, step_skip=self.sampling_rate,
                 )
-                diff.diffusion(self.start_dt, {"progress": True})
+                diff = MSDBootstrap(diff.delta_t, diff.disp_3d, diff._n_o)
+                diff.diffusion(start_dt=self.start_dt)
+                distribution = diff.gradient.samples * diff.dt[:, np.newaxis] + diff.intercept.samples
 
                 result = DiffusionPlotData(
                     structure=species_name,
                     dt=np.asarray(diff.dt),
-                    msd=np.asarray(diff.msd),
-                    msd_std=np.asarray(diff.msd_std),
-                    distribution=np.asarray(diff.distribution),
+                    msd=np.asarray(diff.n),
+                    msd_std=np.asarray(diff.s),
+                    distribution=np.asarray(distribution),
                     D_samples=np.asarray(diff.D.samples),
                     D_n=float(diff.D.n),
                 )
