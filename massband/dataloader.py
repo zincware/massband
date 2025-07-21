@@ -12,6 +12,18 @@ from jax import jit, lax
 
 log = logging.getLogger(__name__)
 
+class LoaderOutput(t.TypedDict, total=False):
+    """
+    Defines the structure of the dictionary yielded by the data loaders.
+    
+    Using `total=False` means keys are optional and will only be present if 
+    requested in the loader's `properties` attribute.
+    """
+    position: dict[str, jnp.ndarray]
+    cell: jnp.ndarray
+    inv_cell: jnp.ndarray
+    masses: jnp.ndarray
+
 
 @jit
 def unwrap_positions_image_flags_batched(
@@ -191,6 +203,7 @@ class TimeBatchedLoader:
     start: int = 0
     stop: int | None = None
     step: int = 1
+    properties: list[t.Literal["position", "cell", "inv-cell", "masses"]] = dataclasses.field(default_factory= lambda: ["position", "cell", "inv-cell"])
 
     def __post_init__(self):
         if not self.fixed_cell:
@@ -243,7 +256,7 @@ class TimeBatchedLoader:
         )
         return self
 
-    def __next__(self) -> t.Tuple[dict[str, jnp.ndarray], jnp.ndarray, jnp.ndarray]:
+    def __next__(self) -> LoaderOutput:
         if not hasattr(self, "total_frames") or self.iter_offset >= self.total_frames:
             raise StopIteration
 
@@ -304,7 +317,11 @@ class TimeBatchedLoader:
             results[structure] = pos
 
         self.iter_offset += frames_in_batch
-        return results, self.first_frame_cell, self.first_frame_inv_cell
+        return {
+            "position": results,
+            "cell": self.first_frame_cell,
+            "inv_cell": self.first_frame_inv_cell
+        }
 
 
 @dataclasses.dataclass
@@ -411,6 +428,7 @@ class SpeciesBatchedLoader:
     stop: int | None = None
     step: int = 1
     memory: bool = False
+    properties: list[t.Literal["position", "cell", "inv-cell", "masses"]] = dataclasses.field(default_factory= lambda: ["position", "cell", "inv-cell"])
 
     def __post_init__(self):
         if not self.fixed_cell:
@@ -469,7 +487,7 @@ class SpeciesBatchedLoader:
         self.species_batch_iterator = iter(self.species_batches)
         return self
 
-    def __next__(self) -> t.Tuple[dict[str, jnp.ndarray], jnp.ndarray, jnp.ndarray]:
+    def __next__(self) -> LoaderOutput:
         try:
             structure, mol_indices_array = next(self.species_batch_iterator)
         except StopIteration:
@@ -506,4 +524,9 @@ class SpeciesBatchedLoader:
         if self.wrap:
             pos = wrap_positions(pos, self.cell, self.inv_cell)
 
-        return {structure: pos}, self.cell, self.inv_cell
+        # return {structure: pos}, self.cell, self.inv_cell
+        return {
+            "position": {structure: pos},
+            "cell": self.cell,
+            "inv_cell": self.inv_cell,
+        }

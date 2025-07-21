@@ -270,8 +270,10 @@ class RadialDistributionFunction(zntrack.Node):
         batch_number = 0
         pbar = tqdm(loader, desc="Processing RDF batches", unit="batch")
 
-        for batch_data, batch_cells, _ in pbar:
+        for batch_output in pbar:
             batch_number += 1
+            batch_data = batch_output["position"]
+            batch_cells = batch_output["cell"]
             batch_frames = list(batch_data.values())[0].shape[0]
             total_frames += batch_frames
 

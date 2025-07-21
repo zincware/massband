@@ -26,7 +26,8 @@ def test_TimeBatchedLoader_batch_size(wrap, structures, bmim_bf4_vectra):
             batch_size=batch_size,
         )
         results = defaultdict(list)
-        for batch, _, _ in tbdl:
+        for batch_output in tbdl:
+            batch = batch_output["position"]
             for species, positions in batch.items():
                 results[species].append(positions)
 
@@ -69,7 +70,8 @@ def test_SpeciesBatchedLoader_batch_size(wrap, structures, bmim_bf4_vectra):
             batch_size=batch_size,
         )
         results = defaultdict(list)
-        for batch, _, _ in sbdl:
+        for batch_output in sbdl:
+            batch = batch_output["position"]
             for species, positions in batch.items():
                 results[species].append(positions)
 
@@ -119,11 +121,13 @@ def test_species_equals_time(tbdl_batch_size, sbdl_batch_size, bmim_bf4_vectra):
     tbdl_data = defaultdict(list)
     sbdl_data = defaultdict(list)
 
-    for batch, _, _ in tbdl:
+    for batch_output in tbdl:
+        batch = batch_output["position"]
         for species, positions in batch.items():
             tbdl_data[species].append(positions)
 
-    for batch, _, _ in sbdl:
+    for batch_output in sbdl:
+        batch = batch_output["position"]
         for species, positions in batch.items():
             sbdl_data[species].append(positions)
 
@@ -166,11 +170,13 @@ def test_species_equals_time_start_step_stop(start, step, stop, bmim_bf4_vectra)
     tbdl_data = defaultdict(list)
     sbdl_data = defaultdict(list)
 
-    for batch, _, _ in tbdl:
+    for batch_output in tbdl:
+        batch = batch_output["position"]
         for species, positions in batch.items():
             tbdl_data[species].append(positions)
 
-    for batch, _, _ in sbdl:
+    for batch_output in sbdl:
+        batch = batch_output["position"]
         for species, positions in batch.items():
             sbdl_data[species].append(positions)
 

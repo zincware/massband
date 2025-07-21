@@ -39,7 +39,8 @@ class RadiusOfGyration(zntrack.Node):
         self.traj.mkdir(parents=True, exist_ok=True)
         atoms_buffer = defaultdict(list)  # Collect strings to write per molecule type
 
-        for pos, _, _ in tqdm(dl, desc="Calculating Radius of Gyration"):
+        for batch_output in tqdm(dl, desc="Calculating Radius of Gyration"):
+            pos = batch_output["position"]
             for key in pos:
                 # Get indices for all molecules of this type, shape: (n_mols, n_atoms_in_mol)
                 # these are wrong! They are not for the wrapped positions, but they are for the original positions
