@@ -13,9 +13,9 @@ def test_rdf_node_smiles(tmp_path, bmim_bf4_vectra):
         structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
     )
     node.run()
-    assert len(node.results[("CCCCN1C=C[N+](=C1)C|[B-](F)(F)(F)F")]) == 146
-    assert len(node.results[("[B-](F)(F)(F)F|[B-](F)(F)(F)F")]) == 146
-    assert len(node.results[("CCCCN1C=C[N+](=C1)C|CCCCN1C=C[N+](=C1)C")]) == 146
+    assert len(node.results[("CCCCN1C=C[N+](=C1)C|[B-](F)(F)(F)F")]) == 171
+    assert len(node.results[("[B-](F)(F)(F)F|[B-](F)(F)(F)F")]) == 171
+    assert len(node.results[("CCCCN1C=C[N+](=C1)C|CCCCN1C=C[N+](=C1)C")]) == 171
     assert len(node.results) == 3
 
     assert (node.figures / "rdf.png").exists()
@@ -47,7 +47,7 @@ def test_rdf_node_full(tmp_path, bmim_bf4_vectra):
         "F|F",
     ]
     for key in ALL_KEYS:
-        assert len(node.results[key]) == 146
+        assert len(node.results[key]) == 171
         assert sum(node.results[key]) > 0
 
     assert len(node.results) == 15
