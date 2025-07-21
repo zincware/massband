@@ -18,4 +18,4 @@ def test_radius_of_gyration_node(tmp_path, bmim_bf4_vectra):
     assert bmim_results["mean"] == pytest.approx(2.600, rel=0.1)
     assert bmim_results["std"] == pytest.approx(0.127, rel=0.1)
     assert bf4_results["mean"] == pytest.approx(1.336, rel=0.1)
-    assert bf4_results["std"] == pytest.approx(0.013, rel=0.1)
+    assert bf4_results["std"] == pytest.approx(0.012, rel=0.1)
