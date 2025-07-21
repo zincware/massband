@@ -29,27 +29,31 @@ class RadiusOfGyration(zntrack.Node):
             structures=self.structures,
             wrap=False,
             com=False,
+            properties=["position", "masses"],
         )
         self.results = {}
         self.data = {}
 
         results = defaultdict(list)
-        masses_array = jnp.array(dl.masses)
 
         self.traj.mkdir(parents=True, exist_ok=True)
         atoms_buffer = defaultdict(list)  # Collect strings to write per molecule type
 
         for batch_output in tqdm(dl, desc="Calculating Radius of Gyration"):
             pos = batch_output["position"]
+            masses_dict = batch_output["masses"]
             for key in pos:
-                # Get indices for all molecules of this type, shape: (n_mols, n_atoms_in_mol)
-                # these are wrong! They are not for the wrapped positions, but they are for the original positions
-                mol_indices = jnp.array(dl.indices[key])
                 # Get atom positions for all molecules, shape: (batch, n_mols, n_atoms, 3)
                 molecule_positions = pos[key]
-                # Get masses, shape: (n_mols, n_atoms_in_mol)
-                molecule_masses = masses_array[mol_indices]
-                # molecule_masses = molecule_masses.reshape(-1)
+                # Get masses for this structure - since com=False, we get individual atom masses
+                atom_masses = masses_dict[key]  # shape: (total_atoms_for_structure,)
+                
+                # Get indices for all molecules of this type to reshape masses properly
+                mol_indices = jnp.array(dl.indices[key])  # shape: (n_mols, n_atoms_per_mol)
+                # Reshape atom masses to match molecule structure: (n_mols, n_atoms_per_mol)
+                molecule_masses = atom_masses.reshape(mol_indices.shape)
+                
+                # Reshape positions to match: (batch, n_mols, n_atoms_per_mol, 3)
                 molecule_positions = molecule_positions.reshape(
                     -1, *molecule_masses.shape, 3
                 )
