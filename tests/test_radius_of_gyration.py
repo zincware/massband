@@ -1,17 +1,16 @@
 import os
-from pathlib import Path
 
 import pytest
 
 import massband
 
-BMIM_BF4_FILE = (Path(__file__).parent.parent / "data" / "bmim_bf4.h5").resolve()
 
-
-def test_radius_of_gyration_node(tmp_path):
+def test_radius_of_gyration_node(tmp_path, bmim_bf4_vectra):
     """Test the RadiusOfGyration node."""
     os.chdir(tmp_path)
-    node = massband.RadiusOfGyration(file=BMIM_BF4_FILE)
+    node = massband.RadiusOfGyration(
+        file=bmim_bf4_vectra, structures=["CCCCN1[CH-][CH+]N(C)[CH-]1", "F[B-](F)(F)F"]
+    )
     node.run()
 
     bmim_results = node.results["CCCCN1[CH-][CH+]N(C)[CH-]1"]
@@ -19,4 +18,4 @@ def test_radius_of_gyration_node(tmp_path):
     assert bmim_results["mean"] == pytest.approx(2.600, rel=0.1)
     assert bmim_results["std"] == pytest.approx(0.127, rel=0.1)
     assert bf4_results["mean"] == pytest.approx(1.336, rel=0.1)
-    assert bf4_results["std"] == pytest.approx(0.013, rel=0.1)
+    assert bf4_results["std"] == pytest.approx(0.012, rel=0.1)

@@ -32,7 +32,7 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
         volume = atoms.get_volume() * ureg.angstrom**3
 
         # e^2 / (T * kB * V)
-        prefactor = (1 * ureg.elementary_charge) **2 / (
+        prefactor = (1 * ureg.elementary_charge) ** 2 / (
             self.temperature * ureg.kelvin * ureg.boltzmann_constant * volume
         )
         # Sum contributions from each ion type

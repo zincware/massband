@@ -5,18 +5,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, TypedDict, Union
 
-import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
-import rdkit2ase
 import zntrack
 from ase import Atoms
-from kinisi.analyze import DiffusionAnalyzer
-from znh5md import IO
+# from kinisi.analyze import DiffusionAnalyzer
+from kinisi.parser import ASEParser
+from kinisi.diffusion import MSDBootstrap
+from tqdm import tqdm
 
 from massband.abc import ComparisonResults
-from massband.utils import unwrap_positions
+from massband.dataloader import SpeciesBatchedLoader
 
 log = logging.getLogger(__name__)
 
@@ -49,107 +49,164 @@ class KinisiSelfDiffusion(zntrack.Node):
     start_dt: float = zntrack.params(50)  # in ps
     results: dict[str, DiffusionResults] = zntrack.metrics()
     seed: int = zntrack.params(42)
+    batch_size: int = zntrack.params(64)
+    start: int = zntrack.params(0)
+    stop: Optional[int] = zntrack.params(None)
+    step: int = zntrack.params(1)
 
     data_path: Path = zntrack.outs_path(zntrack.nwd / "diffusion_data")
 
-    def get_data(self):
-        io = IO(self.file, variable_shape=False, include=["position", "box"])
-        frames: list[Atoms] = io[:]
-        positions = jnp.stack([atoms.positions for atoms in frames])
-        cells = jnp.stack([atoms.cell[:] for atoms in frames])
-        inv_cells = jnp.linalg.inv(cells)
+    def process_species_batches(self):
+        """Iterate through SpeciesBatchedLoader and yield complete species data."""
+        # Use SpeciesBatchedLoader to get batches
+        loader = SpeciesBatchedLoader(
+            file=self.file,
+            structures=self.structures,
+            batch_size=self.batch_size,
+            wrap=False,
+            com=True,  # Use center of mass for molecular structures
+            memory=True,  # Don't load all into memory
+            start=self.start,
+            stop=self.stop,
+            step=self.step,
+        )
 
-        return {
-            "positions": positions,
-            "cells": cells,
-            "inv_cells": inv_cells,
-            "frames": frames,
-        }
+        results = list(tqdm(loader))
+        data = defaultdict(list)
+        for batch_data, _, _ in results:
+            for species_name, positions in batch_data.items():
+                # Accumulate positions for each species
+                data[species_name].append(positions)
+
+        for species_name, positions_list in data.items():
+            # Concatenate all positions for this species
+            combined_positions = np.concatenate(positions_list, axis=1)
+            log.info(
+                f"Yielding complete data for species {species_name} with shape {combined_positions.shape}"
+            )
+            yield species_name, combined_positions
+
+        # # Iterate through all batches
+        # for batch_data, _, _ in tqdm(loader):
+        #     # TODO: This mustn't work because the species are not guaranteed to be in the same order
+        #     for species_name, positions in batch_data.items():
+        #         # Check if we've moved to a new species
+        #         if current_species is None:
+        #             # First species
+        #             current_species = species_name
+        #             accumulated_positions = [positions]
+        #         elif species_name != current_species:
+        #             # New species detected - yield the previous species data
+        #             if accumulated_positions:
+        #                 combined_positions = np.concatenate(accumulated_positions, axis=1)
+        #                 log.info(f"Yielding complete data for species {current_species} with shape {combined_positions.shape}")
+        #                 yield current_species, combined_positions
+
+        #             # Start accumulating for new species
+        #             current_species = species_name
+        #             accumulated_positions = [positions]
+        #         else:
+        #             # Same species - accumulate positions
+        #             # different shapes with com / not com
+        #             accumulated_positions.append(positions)
+
+        # # Yield the last species if we have data
+        # if current_species is not None and accumulated_positions:
+        #     combined_positions = np.concatenate(accumulated_positions, axis=0)
+        #     log.info(f"Yielding final species {current_species} with shape {combined_positions.shape}")
+        #     yield current_species, combined_positions
 
     def run(self):
-        # TODO: need to make sure that in the first frame, all molecules are fully wrapped!!
         np.random.seed(self.seed)
         self.results = {}
-        data = self.get_data()
-        positions_unwrapped = unwrap_positions(
-            data["positions"], data["cells"], data["inv_cells"]
-        )
-        log.info(f"Unwrapped positions shape: {positions_unwrapped.shape}")
-
-        substructures = defaultdict(list)
-        # TODO: use com stuff
-        if self.structures:
-            log.info(f"Searching for substructures in {len(self.structures)} patterns")
-            for structure in self.structures:
-                indices = rdkit2ase.match_substructure(
-                    data["frames"][0],
-                    smiles=structure,
-                    suggestions=self.structures,
-                )
-                if indices:
-                    substructures[structure].extend(indices)
-                    log.info(f"Found {len(indices)} matches for {structure}")
-
         self.data_path.mkdir(exist_ok=True, parents=True)
 
-        for structure, indices in substructures.items():
-            flat_indices = [i for sublist in indices for i in sublist]
-            sub_frames = [atoms[flat_indices] for atoms in data["frames"]]
-            specie_indices = rdkit2ase.match_substructure(
-                sub_frames[0],
-                smiles=structure,
-                suggestions=self.structures,
-            )
-            occurrences: int = len(specie_indices)
-            masses = sub_frames[0][specie_indices[0]].get_masses().tolist()
+        # Account for step in the effective time step
+        effective_time_step = self.time_step / 1000 * self.step
 
-            diff = DiffusionAnalyzer.from_ase(
-                sub_frames,
-                parser_params={
-                    "specie": None,
-                    "time_step": self.time_step / 1000,
-                    "step_skip": self.sampling_rate,
-                    "specie_indices": specie_indices,
-                    "masses": masses,
-                    "progress": True,
-                },
-                uncertainty_params={"progress": True},
-            )
-            diff.diffusion(self.start_dt, {"progress": True})
+        # Process each species individually
+        for species_name, positions in self.process_species_batches():
+            log.info(f"Processing diffusion analysis for {species_name}")
 
-            result = DiffusionPlotData(
-                structure=structure,
-                dt=np.asarray(diff.dt),
-                msd=np.asarray(diff.msd),
-                msd_std=np.asarray(diff.msd_std),
-                distribution=np.asarray(diff.distribution),
-                D_samples=np.asarray(diff.D.samples),
-                D_n=float(diff.D.n),
-            )
+            # positions shape: (n_frames, n_molecules, 3)
+            n_frames, n_molecules, _ = positions.shape
+            # Create ASE Atoms objects for each frame
+            # Since we're working with COM positions, we treat each as a single atom
+            frames = []
+            for frame_idx in range(n_frames):
+                frame_positions = positions[frame_idx]  # Shape: (n_molecules, 3)
 
-            with open(self.data_path / f"{structure}.pkl", "wb") as f:
-                pickle.dump(result, f)
+                # Create atoms object with dummy atomic numbers (e.g., all as hydrogen)
+                atoms = Atoms(
+                    # symbols=["H"] * n_molecules,
+                    positions=frame_positions,
+                    pbc=False,
+                    cell=[100000, 1000000, 100000],  # required for kinisi to work
+                )
+                frames.append(atoms)
 
-            # Compute uncertainty statistics from D_samples
-            D_mean = result.D_n
-            D_std = np.std(result.D_samples)
-            ci68 = np.percentile(result.D_samples, [16, 84])
-            ci95 = np.percentile(result.D_samples, [2.5, 97.5])
+            # For COM positions, each "molecule" is treated as a single entity
+            occurrences = n_molecules
 
-            # Optional: asymmetric error bars
-            uncertainty_low = D_mean - ci68[0]
-            uncertainty_high = ci68[1] - D_mean
+            try:
+                # diff = DiffusionAnalyzer.from_ase(
+                #     frames,
+                #     parser_params={
+                #         "specie": "H",
+                #         "time_step": effective_time_step,
+                #         "step_skip": self.sampling_rate,
+                #         "progress": True,
+                #     },
+                #     uncertainty_params={"progress": True},
+                # )
+                # diff.diffusion(self.start_dt, {"progress": True})
+                diff = ASEParser(
+                    atoms=frames, specie="X", time_step=effective_time_step, step_skip=self.sampling_rate,
+                )
+                diff = MSDBootstrap(diff.delta_t, diff.disp_3d, diff._n_o)
+                diff.diffusion(start_dt=self.start_dt)
+                distribution = diff.gradient.samples * diff.dt[:, np.newaxis] + diff.intercept.samples
 
-            # Store in results
-            # TODO: include typed dict type hints.
-            self.results[structure] = {
-                "diffusion_coefficient": result.D_n,
-                "std": D_std,
-                "credible_interval_68": ci68.tolist(),
-                "credible_interval_95": ci95.tolist(),
-                "asymmetric_uncertainty": [uncertainty_low, uncertainty_high],
-                "occurrences": occurrences,
-            }
+                result = DiffusionPlotData(
+                    structure=species_name,
+                    dt=np.asarray(diff.dt),
+                    msd=np.asarray(diff.n),
+                    msd_std=np.asarray(diff.s),
+                    distribution=np.asarray(distribution),
+                    D_samples=np.asarray(diff.D.samples),
+                    D_n=float(diff.D.n),
+                )
+
+                with open(self.data_path / f"{species_name}.pkl", "wb") as f:
+                    pickle.dump(result, f)
+
+                # Compute uncertainty statistics from D_samples
+                D_mean = result.D_n
+                D_std = np.std(result.D_samples)
+                ci68 = np.percentile(result.D_samples, [16, 84])
+                ci95 = np.percentile(result.D_samples, [2.5, 97.5])
+
+                # Optional: asymmetric error bars
+                uncertainty_low = D_mean - ci68[0]
+                uncertainty_high = ci68[1] - D_mean
+
+                # Store in results
+                self.results[species_name] = {
+                    "diffusion_coefficient": result.D_n,
+                    "std": D_std,
+                    "credible_interval_68": ci68.tolist(),
+                    "credible_interval_95": ci95.tolist(),
+                    "asymmetric_uncertainty": [uncertainty_low, uncertainty_high],
+                    "occurrences": occurrences,
+                }
+
+                log.info(
+                    f"Completed diffusion analysis for {species_name}: D = {D_mean:.3e} cm²/s"
+                )
+
+            except Exception as e:
+                log.error(f"Failed to process species {species_name}: {e}")
+                continue
 
         self.plot()
 
