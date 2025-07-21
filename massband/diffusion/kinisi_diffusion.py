@@ -73,7 +73,8 @@ class KinisiSelfDiffusion(zntrack.Node):
 
         results = list(tqdm(loader))
         data = defaultdict(list)
-        for batch_data, _, _ in results:
+        for batch_output in results:
+            batch_data = batch_output["position"]
             for species_name, positions in batch_data.items():
                 # Accumulate positions for each species
                 data[species_name].append(positions)
