@@ -8,6 +8,7 @@ from massband.dataloader import SpeciesBatchedLoader, TimeBatchedLoader
 
 # TODO: use a trajectory with very fast diffusion, e.g. via vectra
 # TODO: the trajectory must be wrapped for the test to make sen
+# TODO: test that the first frame is correctly unwrapped
 
 
 @pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
@@ -113,6 +114,7 @@ def test_species_equals_time(tbdl_batch_size, sbdl_batch_size, bmim_bf4_vectra):
         memory=True,
         batch_size=sbdl_batch_size,
     )
+    assert jnp.allclose(tbdl.first_frame_atoms.positions, sbdl.first_frame_atoms.positions, atol=1e-6)
 
     tbdl_data = defaultdict(list)
     sbdl_data = defaultdict(list)
@@ -130,5 +132,53 @@ def test_species_equals_time(tbdl_batch_size, sbdl_batch_size, bmim_bf4_vectra):
     for key in tbdl_data.keys():
         concat_tbdl = jnp.concatenate(tbdl_data[key], axis=0)
         concat_sbdl = jnp.concatenate(sbdl_data[key], axis=1)
+
+        assert concat_tbdl.shape == concat_sbdl.shape
+        assert jnp.allclose(concat_tbdl, concat_sbdl, atol=1e-6)
+
+
+@pytest.mark.parametrize("start", [0, 100])
+@pytest.mark.parametrize("step", [1, 8])
+@pytest.mark.parametrize("stop", [None])
+def test_species_equals_time_start_step_stop(start, step, stop, bmim_bf4_vectra):
+    tbdl = TimeBatchedLoader(
+        file=bmim_bf4_vectra,
+        structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
+        wrap=False,
+        memory=True,
+        batch_size=100,
+        start=start,
+        step=step,
+        stop=stop,
+    )
+    sbdl = SpeciesBatchedLoader(
+        file=bmim_bf4_vectra,
+        structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
+        wrap=False,
+        memory=True,
+        batch_size=100,
+        start=start,
+        step=step,
+        stop=stop,
+    )
+    assert jnp.allclose(tbdl.first_frame_atoms.positions, sbdl.first_frame_atoms.positions, atol=1e-6)
+
+    tbdl_data = defaultdict(list)
+    sbdl_data = defaultdict(list)
+
+    for batch, _, _ in tbdl:
+        for species, positions in batch.items():
+            tbdl_data[species].append(positions)
+
+    for batch, _, _ in sbdl:
+        for species, positions in batch.items():
+            sbdl_data[species].append(positions)
+
+    assert tbdl_data.keys() == sbdl_data.keys()
+    assert len(tbdl_data) == 2
+    for key in tbdl_data.keys():
+        concat_tbdl = jnp.concatenate(tbdl_data[key], axis=0)
+        concat_sbdl = jnp.concatenate(sbdl_data[key], axis=1)
+
         assert concat_tbdl.shape == concat_sbdl.shape
         assert jnp.allclose(concat_tbdl, concat_sbdl, atol=1e-6)

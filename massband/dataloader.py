@@ -213,15 +213,15 @@ class TimeBatchedLoader:
 
         first_frame_raw = self.handler[0]
         self.first_frame_atoms = rdkit2ase.unwrap_structures(first_frame_raw)
+        self.first_frame_pos = jnp.array(self.first_frame_atoms.get_positions())
         self.first_frame_cell = jnp.array(self.first_frame_atoms.get_cell()[:])
         self.first_frame_inv_cell = jnp.linalg.inv(self.first_frame_cell)
 
-        first_frame_pos = jnp.array(self.first_frame_atoms.get_positions())
         self.masses = jnp.array(self.first_frame_atoms.get_masses())
         self.indices = _get_indices(self.first_frame_atoms, self.structures)
 
         # State for iteration: last wrapped position and the integer image flags
-        self.last_wrapped_pos = first_frame_pos
+        self.last_wrapped_pos = self.first_frame_pos
         self.image_flag_state = jnp.zeros(
             (len(self.first_frame_atoms), 3), dtype=jnp.int32
         )
@@ -237,8 +237,7 @@ class TimeBatchedLoader:
     def __iter__(self):
         self.iter_offset = 0
         # Reset state for a new iteration to ensure reproducibility
-        first_frame_pos = jnp.array(self.first_frame_atoms.get_positions())
-        self.last_wrapped_pos = first_frame_pos
+        self.last_wrapped_pos = self.first_frame_pos
         self.image_flag_state = jnp.zeros(
             (len(self.first_frame_atoms), 3), dtype=jnp.int32
         )
@@ -256,6 +255,10 @@ class TimeBatchedLoader:
         batch = self.handler[slice_start:slice_stop:slice_step]
         if not batch:
             raise StopIteration
+
+        batch = list(batch)
+        if self.iter_offset == 0:
+            batch[0] = self.first_frame_atoms
 
         batch_positions = jnp.array([x.get_positions() for x in batch])
 
@@ -475,6 +478,9 @@ class SpeciesBatchedLoader:
         atom_indices_flat = mol_indices_array.flatten()
 
         sliced_frames = self.handler[self.start : self.stop : self.step]
+        sliced_frames = list(sliced_frames)
+        sliced_frames[0] = self.first_frame_atoms
+
         raw_positions = jnp.array(
             [frame.get_positions()[atom_indices_flat] for frame in sliced_frames]
         )
