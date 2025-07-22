@@ -9,17 +9,18 @@ import jax.numpy as jnp
 import rdkit2ase
 import znh5md
 from jax import jit, lax
-import networkx as nx
 
 log = logging.getLogger(__name__)
+
 
 class LoaderOutput(t.TypedDict, total=False):
     """
     Defines the structure of the dictionary yielded by the data loaders.
-    
-    Using `total=False` means keys are optional and will only be present if 
+
+    Using `total=False` means keys are optional and will only be present if
     requested in the loader's `properties` attribute.
     """
+
     position: dict[str, jnp.ndarray]
     cell: jnp.ndarray
     inv_cell: jnp.ndarray
@@ -103,6 +104,7 @@ def _get_indices(
         indices[structure] = list(mol_matches)
     return dict(indices)
 
+
 @dataclasses.dataclass
 class IndependentBatchedLoader:
     file: Path | str
@@ -114,39 +116,47 @@ class IndependentBatchedLoader:
     start: int = 0
     stop: int | None = None
     step: int = 1
-    properties: list[t.Literal["position", "cell", "inv-cell", "masses", "indices"]] = dataclasses.field(default_factory= lambda: ["position", "cell", "inv-cell"])
+    properties: list[t.Literal["position", "cell", "inv-cell", "masses", "indices"]] = (
+        dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
+    )
 
     def __post_init__(self):
         self.handler = znh5md.IO(
             self.file, variable_shape=False, include=["position", "box"]
         )
         if self.batch_size != 1:
-            log.warning("Batch size must be 1 for IndependentBatchedLoader. Setting to 1.")
-            self.batch_size = 1 # can't be any larger for inhomogeneous shapes.
+            log.warning(
+                "Batch size must be 1 for IndependentBatchedLoader. Setting to 1."
+            )
+            self.batch_size = 1  # can't be any larger for inhomogeneous shapes.
         if self.memory:
             log.info(f"Loading {self.file} into memory ...")
             self.handler = self.handler[self.start : self.stop : self.step]
             self.start, self.step = 0, 1
-        
-        self.total_frames = len(range(self.start, self.stop or len(self.handler), self.step))
+
+        self.total_frames = len(
+            range(self.start, self.stop or len(self.handler), self.step)
+        )
         if self.total_frames == 0:
             log.warning("The specified start, stop, and step result in zero frames.")
             return
-        
+
         # Initialize indices from the first frame like other loaders
         first_frame_raw = self.handler[0]
-        first_frame_atoms = rdkit2ase.unwrap_structures(first_frame_raw, suggestions=None)
-        self.indices = _get_indices(first_frame_atoms, self.structures)
-    
+        self.first_frame_atoms = rdkit2ase.unwrap_structures(
+            first_frame_raw, suggestions=None
+        )
+        self.indices = _get_indices(self.first_frame_atoms, self.structures)
+
     def __len__(self):
         if not hasattr(self, "total_frames"):
             return 0
         return self.total_frames
-    
+
     def __iter__(self):
         self.iter_offset = 0
         return self
-    
+
     def __next__(self) -> LoaderOutput:
         if not hasattr(self, "total_frames") or self.iter_offset >= self.total_frames:
             raise StopIteration
@@ -159,15 +169,16 @@ class IndependentBatchedLoader:
         batch = self.handler[slice_start:slice_stop:slice_step]
         if not batch:
             raise StopIteration
-        
 
         pos_dict = {}
         masses_dict = {}
         indices_dict = {}
-    
+        cells = []
+
         for frame_idx, atoms in enumerate(batch):
             atoms = rdkit2ase.unwrap_structures(atoms, suggestions=None)
-            
+            cells.append(atoms.get_cell()[:])
+
             # Get indices for this frame
             try:
                 frame_indices = _get_indices(atoms, self.structures)
@@ -175,19 +186,21 @@ class IndependentBatchedLoader:
                 log.warning(f"Failed to get indices for frame {frame_idx}: {e}")
                 # Skip this frame if we can't process it
                 continue
-            
+
             for structure, mol_indices_list in frame_indices.items():
                 if not mol_indices_list:
                     continue
-                    
+
                 # Collect positions and masses for each molecule
                 for mol_indices in mol_indices_list:
+                    if self.wrap:
+                        atoms.wrap()
                     positions = atoms.get_positions()[list(mol_indices)]
                     masses = atoms.get_masses()[list(mol_indices)]
-                    
+
                     pos_dict.setdefault(structure, []).append(positions)
                     masses_dict.setdefault(structure, []).append(masses)
-                
+
                 # Store indices (convert tuples to arrays for consistency)
                 if structure not in indices_dict:
                     indices_dict[structure] = jnp.array(mol_indices_list)
@@ -195,7 +208,7 @@ class IndependentBatchedLoader:
         results = {}
         position_results = {}
         masses_results = {}
-        
+
         for k, v in pos_dict.items():
             try:
                 # Try to convert to regular array first
@@ -203,7 +216,7 @@ class IndependentBatchedLoader:
             except ValueError:
                 # Handle inhomogeneous shapes by keeping as list of arrays
                 position_results[k] = [jnp.array(pos) for pos in v]
-        
+
         for k, v in masses_dict.items():
             try:
                 # Try to convert to regular array first
@@ -211,16 +224,18 @@ class IndependentBatchedLoader:
             except ValueError:
                 # Handle inhomogeneous shapes by keeping as list of arrays
                 masses_results[k] = [jnp.array(mass) for mass in v]
-        
+
         results["position"] = position_results
         results["masses"] = masses_results
-        
+
         # Add indices to results if requested
         if "indices" in self.properties:
             results["indices"] = indices_dict
+        if "cell" in self.properties:
+            results["cell"] = jnp.array(cells)
 
         self.iter_offset += frames_in_batch
-            
+
         return results
 
 
@@ -325,7 +340,9 @@ class TimeBatchedLoader:
     start: int = 0
     stop: int | None = None
     step: int = 1
-    properties: list[t.Literal["position", "cell", "inv-cell", "masses", "indices"]] = dataclasses.field(default_factory= lambda: ["position", "cell", "inv-cell"])
+    properties: list[t.Literal["position", "cell", "inv-cell", "masses", "indices"]] = (
+        dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
+    )
 
     def __post_init__(self):
         if not self.fixed_cell:
@@ -416,7 +433,7 @@ class TimeBatchedLoader:
 
         # Build output dictionary based on requested properties
         output = {}
-        
+
         if "position" in self.properties:
             position_data = defaultdict(list)
             for structure, all_mols in self.indices.items():
@@ -442,7 +459,7 @@ class TimeBatchedLoader:
                     )
                 position_results[structure] = pos
             output["position"] = position_results
-        
+
         if "masses" in self.properties:
             masses_data = {}
             for structure, all_mols in self.indices.items():
@@ -459,13 +476,13 @@ class TimeBatchedLoader:
                     total_mol_mass = jnp.sum(masses, axis=1)
                     masses_data[structure] = total_mol_mass
             output["masses"] = masses_data
-        
+
         if "cell" in self.properties:
             output["cell"] = self.first_frame_cell
-        
+
         if "inv-cell" in self.properties:
             output["inv_cell"] = self.first_frame_inv_cell
-        
+
         if "indices" in self.properties:
             # Convert indices format to match expected structure
             indices_data = {}
@@ -582,7 +599,9 @@ class SpeciesBatchedLoader:
     stop: int | None = None
     step: int = 1
     memory: bool = False
-    properties: list[t.Literal["position", "cell", "inv-cell", "masses", "indices"]] = dataclasses.field(default_factory= lambda: ["position", "cell", "inv-cell"])
+    properties: list[t.Literal["position", "cell", "inv-cell", "masses", "indices"]] = (
+        dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
+    )
 
     def __post_init__(self):
         if not self.fixed_cell:
@@ -680,10 +699,10 @@ class SpeciesBatchedLoader:
 
         # Build output dictionary based on requested properties
         output = {}
-        
+
         if "position" in self.properties:
             output["position"] = {structure: pos}
-        
+
         if "masses" in self.properties:
             if not self.com:
                 # For individual atoms, return masses for each atom
@@ -694,13 +713,13 @@ class SpeciesBatchedLoader:
                 total_mol_mass = jnp.sum(masses, axis=1)
                 masses_data = total_mol_mass
             output["masses"] = {structure: masses_data}
-        
+
         if "cell" in self.properties:
             output["cell"] = self.cell
-        
+
         if "inv-cell" in self.properties:
             output["inv_cell"] = self.inv_cell
-        
+
         if "indices" in self.properties:
             # For SpeciesBatchedLoader, return indices for current batch
             output["indices"] = {structure: mol_indices_array}

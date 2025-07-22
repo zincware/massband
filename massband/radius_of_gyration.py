@@ -1,14 +1,14 @@
+import typing as t
 from collections import defaultdict
 from pathlib import Path
 
-import ase.io
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import zntrack
 from scipy.signal import correlate
 from tqdm import tqdm
 
-from massband.dataloader import TimeBatchedLoader, IndependentBatchedLoader
+from massband.dataloader import IndependentBatchedLoader, TimeBatchedLoader
 
 
 class RadiusOfGyration(zntrack.Node):
@@ -19,16 +19,19 @@ class RadiusOfGyration(zntrack.Node):
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
     results: dict = zntrack.metrics()
     data: dict = zntrack.outs()
-    dataloader: str = zntrack.params("TimeBatchedLoader")
+    dataloader: t.Literal["TimeBatchedLoader", "IndependentBatchedLoader"] = (
+        zntrack.params("TimeBatchedLoader")
+    )
     start: int = zntrack.params(0)
-    stop: int|None = zntrack.params(None)
+    stop: int | None = zntrack.params(None)
     step: int = zntrack.params(1)
+    batch_size: int = zntrack.params(64)
 
     def run(self) -> None:
         if self.dataloader == "TimeBatchedLoader":
             dl = TimeBatchedLoader(
                 file=self.file,
-                batch_size=64,
+                batch_size=self.batch_size,
                 structures=self.structures,
                 wrap=False,
                 com=False,
@@ -69,12 +72,12 @@ class RadiusOfGyration(zntrack.Node):
                 molecule_positions = pos[key]
                 # Get masses for this structure - since com=False, we get individual atom masses
                 atom_masses = masses_dict[key]  # shape: (total_atoms_for_structure,)
-                
+
                 # Get indices for all molecules of this type to reshape masses properly
                 mol_indices = indices_dict[key]  # shape: (n_mols, n_atoms_per_mol)
                 # Reshape atom masses to match molecule structure: (n_mols, n_atoms_per_mol)
                 molecule_masses = atom_masses.reshape(mol_indices.shape)
-                
+
                 # Reshape positions to match: (batch, n_mols, n_atoms_per_mol, 3)
                 molecule_positions = molecule_positions.reshape(
                     -1, *molecule_masses.shape, 3

@@ -10,9 +10,10 @@ import numpy as np
 import plotly.graph_objects as go
 import zntrack
 from ase import Atoms
+from kinisi.diffusion import MSDBootstrap
+
 # from kinisi.analyze import DiffusionAnalyzer
 from kinisi.parser import ASEParser
-from kinisi.diffusion import MSDBootstrap
 from tqdm import tqdm
 
 from massband.abc import ComparisonResults
@@ -162,11 +163,17 @@ class KinisiSelfDiffusion(zntrack.Node):
                 # )
                 # diff.diffusion(self.start_dt, {"progress": True})
                 diff = ASEParser(
-                    atoms=frames, specie="X", time_step=effective_time_step, step_skip=self.sampling_rate,
+                    atoms=frames,
+                    specie="X",
+                    time_step=effective_time_step,
+                    step_skip=self.sampling_rate,
                 )
                 diff = MSDBootstrap(diff.delta_t, diff.disp_3d, diff._n_o)
                 diff.diffusion(start_dt=self.start_dt)
-                distribution = diff.gradient.samples * diff.dt[:, np.newaxis] + diff.intercept.samples
+                distribution = (
+                    diff.gradient.samples * diff.dt[:, np.newaxis]
+                    + diff.intercept.samples
+                )
 
                 result = DiffusionPlotData(
                     structure=species_name,
