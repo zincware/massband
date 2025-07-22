@@ -610,13 +610,15 @@ class SpeciesBatchedLoader:
         self.handler = znh5md.IO(
             self.file, variable_shape=False, include=["position", "box"]
         )
+        effective_stop = self.stop if self.stop is not None else len(self.handler)
+        self.total_frames = len(range(self.start, effective_stop, self.step))
+
         if self.memory:
             log.info(f"Loading {self.file} into memory ...")
             self.handler = self.handler[self.start : self.stop : self.step]
             self.start, self.step = 0, 1
 
-        effective_stop = self.stop if self.stop is not None else len(self.handler)
-        self.total_frames = len(range(self.start, effective_stop, self.step))
+
 
         if self.total_frames == 0:
             log.warning("The specified start, stop, and step result in zero frames.")
