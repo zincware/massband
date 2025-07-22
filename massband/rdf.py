@@ -1,5 +1,6 @@
 import itertools
 import logging
+import typing as t
 from functools import partial
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from jax import jit, vmap
 from tqdm import tqdm
 
 from massband.abc import ComparisonResults
-from massband.dataloader import TimeBatchedLoader
+from massband.dataloader import IndependentBatchedLoader, TimeBatchedLoader
 from massband.rdf_fit import FIT_METHODS
 from massband.rdf_plot import plot_rdf
 
@@ -175,23 +176,44 @@ class RadialDistributionFunction(zntrack.Node):
     bayesian: bool = zntrack.params(False)  # Whether to use Bayesian fitting
     fit_method: FIT_METHODS = zntrack.params("none")  # Method for fitting the
 
+    dataloader: t.Literal["TimeBatchedLoader", "IndependentBatchedLoader"] = (
+        zntrack.params("TimeBatchedLoader")
+    )
     results: dict[str, list[float]] = zntrack.outs()
 
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
     def run(self):  # noqa: C901
-        loader = TimeBatchedLoader(
-            file=self.file,
-            batch_size=self.batch_size,
-            structures=self.structures,
-            wrap=True,
-            fixed_cell=True,
-            com=self.structures
-            is not None,  # Compute center of mass if structures are provided
-            start=self.start,
-            stop=self.stop,
-            step=self.step,
-        )
+        if self.dataloader == "TimeBatchedLoader":
+            loader = TimeBatchedLoader(
+                file=self.file,
+                batch_size=self.batch_size,
+                structures=self.structures,
+                wrap=True,
+                com=self.structures is not None,
+                properties=["position", "cell"],
+                start=self.start,
+                stop=self.stop,
+                step=self.step,
+            )
+        elif self.dataloader == "IndependentBatchedLoader":
+            print("Using IndependentBatchedLoader for inhomogeneous structures.")
+            loader = IndependentBatchedLoader(
+                file=self.file,
+                batch_size=1,
+                structures=self.structures,
+                wrap=True,
+                com=self.structures is not None,
+                properties=["position", "cell"],
+                start=self.start,
+                stop=self.stop,
+                step=self.step,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported dataloader type: {self.dataloader}. "
+                "Use 'TimeBatchedLoader' or 'IndependentBatchedLoader'."
+            )
 
         # Initialize variables for RDF computation
         cells = None
@@ -200,7 +222,7 @@ class RadialDistributionFunction(zntrack.Node):
         total_frames = 0
 
         # Determine max distance and bin edges from first batch
-        cells = loader.first_frame_cell
+        cells = loader.first_frame_atoms.get_cell()[:]
         # structure_names = list(first_batch_data.keys())
         structure_names = list(loader.indices.keys())
 

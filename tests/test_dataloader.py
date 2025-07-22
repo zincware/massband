@@ -116,7 +116,9 @@ def test_species_equals_time(tbdl_batch_size, sbdl_batch_size, bmim_bf4_vectra):
         memory=True,
         batch_size=sbdl_batch_size,
     )
-    assert jnp.allclose(tbdl.first_frame_atoms.positions, sbdl.first_frame_atoms.positions, atol=1e-6)
+    assert jnp.allclose(
+        tbdl.first_frame_atoms.positions, sbdl.first_frame_atoms.positions, atol=1e-6
+    )
 
     tbdl_data = defaultdict(list)
     sbdl_data = defaultdict(list)
@@ -165,7 +167,9 @@ def test_species_equals_time_start_step_stop(start, step, stop, bmim_bf4_vectra)
         step=step,
         stop=stop,
     )
-    assert jnp.allclose(tbdl.first_frame_atoms.positions, sbdl.first_frame_atoms.positions, atol=1e-6)
+    assert jnp.allclose(
+        tbdl.first_frame_atoms.positions, sbdl.first_frame_atoms.positions, atol=1e-6
+    )
 
     tbdl_data = defaultdict(list)
     sbdl_data = defaultdict(list)

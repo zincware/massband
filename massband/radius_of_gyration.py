@@ -1,14 +1,14 @@
+import typing as t
 from collections import defaultdict
 from pathlib import Path
 
-import ase.io
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import zntrack
 from scipy.signal import correlate
 from tqdm import tqdm
 
-from massband.dataloader import TimeBatchedLoader
+from massband.dataloader import IndependentBatchedLoader, TimeBatchedLoader
 
 
 class RadiusOfGyration(zntrack.Node):
@@ -19,40 +19,65 @@ class RadiusOfGyration(zntrack.Node):
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
     results: dict = zntrack.metrics()
     data: dict = zntrack.outs()
-
-    traj: Path = zntrack.outs_path(zntrack.nwd / "traj")
+    dataloader: t.Literal["TimeBatchedLoader", "IndependentBatchedLoader"] = (
+        zntrack.params("TimeBatchedLoader")
+    )
+    start: int = zntrack.params(0)
+    stop: int | None = zntrack.params(None)
+    step: int = zntrack.params(1)
+    batch_size: int = zntrack.params(64)
 
     def run(self) -> None:
-        dl = TimeBatchedLoader(
-            file=self.file,
-            batch_size=64,
-            structures=self.structures,
-            wrap=False,
-            com=False,
-            properties=["position", "masses"],
-        )
+        if self.dataloader == "TimeBatchedLoader":
+            dl = TimeBatchedLoader(
+                file=self.file,
+                batch_size=self.batch_size,
+                structures=self.structures,
+                wrap=False,
+                com=False,
+                properties=["position", "masses", "indices"],
+                start=self.start,
+                stop=self.stop,
+                step=self.step,
+            )
+        elif self.dataloader == "IndependentBatchedLoader":
+            print("Using IndependentBatchedLoader for inhomogeneous structures.")
+            dl = IndependentBatchedLoader(
+                file=self.file,
+                batch_size=1,
+                structures=self.structures,
+                wrap=False,
+                com=False,
+                properties=["position", "masses", "indices"],
+                start=self.start,
+                stop=self.stop,
+                step=self.step,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported dataloader type: {self.dataloader}. "
+                "Use 'TimeBatchedLoader' or 'IndependentBatchedLoader'."
+            )
         self.results = {}
         self.data = {}
 
         results = defaultdict(list)
 
-        self.traj.mkdir(parents=True, exist_ok=True)
-        atoms_buffer = defaultdict(list)  # Collect strings to write per molecule type
-
         for batch_output in tqdm(dl, desc="Calculating Radius of Gyration"):
             pos = batch_output["position"]
             masses_dict = batch_output["masses"]
+            indices_dict = batch_output["indices"]
             for key in pos:
                 # Get atom positions for all molecules, shape: (batch, n_mols, n_atoms, 3)
                 molecule_positions = pos[key]
                 # Get masses for this structure - since com=False, we get individual atom masses
                 atom_masses = masses_dict[key]  # shape: (total_atoms_for_structure,)
-                
+
                 # Get indices for all molecules of this type to reshape masses properly
-                mol_indices = jnp.array(dl.indices[key])  # shape: (n_mols, n_atoms_per_mol)
+                mol_indices = indices_dict[key]  # shape: (n_mols, n_atoms_per_mol)
                 # Reshape atom masses to match molecule structure: (n_mols, n_atoms_per_mol)
                 molecule_masses = atom_masses.reshape(mol_indices.shape)
-                
+
                 # Reshape positions to match: (batch, n_mols, n_atoms_per_mol, 3)
                 molecule_positions = molecule_positions.reshape(
                     -1, *molecule_masses.shape, 3
@@ -93,14 +118,6 @@ class RadiusOfGyration(zntrack.Node):
                 results[key].append(rg)
 
         self.figures.mkdir(parents=True, exist_ok=True)
-        for key in atoms_buffer:
-            # Write the collected ASE Atoms objects to a file
-            ase.io.write(
-                self.traj / f"{key}.xyz",
-                atoms_buffer[key],
-                format="extxyz",
-                append=True,
-            )
 
         # --- Per-Molecule Analysis and Plotting ---
         # This will store the mean Rg time series for global analysis
