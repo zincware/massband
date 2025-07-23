@@ -143,9 +143,7 @@ class IndependentBatchedLoader:
 
         # Initialize indices from the first frame like other loaders
         first_frame_raw = self.handler[0]
-        self.first_frame_atoms = rdkit2ase.unwrap_structures(
-            first_frame_raw, suggestions=None
-        )
+        self.first_frame_atoms = rdkit2ase.unwrap_structures(first_frame_raw)
         self.indices = _get_indices(self.first_frame_atoms, self.structures)
 
     def __len__(self):
@@ -176,7 +174,7 @@ class IndependentBatchedLoader:
         cells = []
 
         for frame_idx, atoms in enumerate(batch):
-            atoms = rdkit2ase.unwrap_structures(atoms, suggestions=None)
+            atoms = rdkit2ase.unwrap_structures(atoms)
             cells.append(atoms.get_cell()[:])
 
             # Get indices for this frame
@@ -389,10 +387,11 @@ class TimeBatchedLoader:
     def __iter__(self):
         self.iter_offset = 0
         # Reset state for a new iteration to ensure reproducibility
-        self.last_wrapped_pos = self.first_frame_pos
-        self.image_flag_state = jnp.zeros(
-            (len(self.first_frame_atoms), 3), dtype=jnp.int32
-        )
+        if hasattr(self, 'first_frame_pos'):  # Only if loader was properly initialized
+            self.last_wrapped_pos = self.first_frame_pos
+            self.image_flag_state = jnp.zeros(
+                (len(self.first_frame_atoms), 3), dtype=jnp.int32
+            )
         return self
 
     def __next__(self) -> LoaderOutput:
