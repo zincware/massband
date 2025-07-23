@@ -114,13 +114,17 @@ class ViscosityCalculator(zntrack.Node):
         # First plot: Full autocorrelation functions
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
         
+        # Convert times to picoseconds for plotting
+        times_ps = times / 1000.0
+        cutoff_time_ps = (cutoff_idx * dt_val) / 1000.0
+        
         # Plot individual autocorrelations (truncated to plot_length)
-        ax1.plot(times, acf_xy[:plot_length], label='σ_xy', alpha=0.7)
-        ax1.plot(times, acf_xz[:plot_length], label='σ_xz', alpha=0.7)
-        ax1.plot(times, acf_yz[:plot_length], label='σ_yz', alpha=0.7)
-        ax1.plot(times, acf_avg[:plot_length], 'k-', linewidth=2, label='Average')
-        ax1.axvline(cutoff_idx * dt_val, color='red', linestyle='--', label=f'Cutoff ({cutoff_idx} frames)')
-        ax1.set_xlabel('Time (fs)')
+        ax1.plot(times_ps, acf_xy[:plot_length], label='σ_xy', alpha=0.7)
+        ax1.plot(times_ps, acf_xz[:plot_length], label='σ_xz', alpha=0.7)
+        ax1.plot(times_ps, acf_yz[:plot_length], label='σ_yz', alpha=0.7)
+        ax1.plot(times_ps, acf_avg[:plot_length], 'k-', linewidth=2, label='Average')
+        ax1.axvline(cutoff_time_ps, color='red', linestyle='--', label=f'Cutoff ({cutoff_idx} frames)')
+        ax1.set_xlabel('Time t / ps')
         ax1.set_ylabel('Stress Autocorrelation')
         ax1.set_title('Stress Tensor Autocorrelation Functions')
         ax1.legend()
@@ -128,10 +132,11 @@ class ViscosityCalculator(zntrack.Node):
         
         # Plot zoomed view around cutoff
         zoom_end = min(cutoff_idx * 3, plot_length)
-        ax2.plot(times[:zoom_end], acf_avg[:zoom_end], 'k-', linewidth=2)
-        ax2.axvline(cutoff_idx * dt_val, color='red', linestyle='--', label='Integration cutoff')
+        times_zoom_ps = times_ps[:zoom_end]
+        ax2.plot(times_zoom_ps, acf_avg[:zoom_end], 'k-', linewidth=2)
+        ax2.axvline(cutoff_time_ps, color='red', linestyle='--', label='Integration cutoff')
         ax2.axhline(0, color='gray', linestyle='-', alpha=0.5)
-        ax2.set_xlabel('Time (fs)')
+        ax2.set_xlabel('Time t / ps')
         ax2.set_ylabel('Average Stress Autocorrelation')
         ax2.set_title('Integration Region (Zoomed)')
         ax2.legend()
@@ -142,8 +147,7 @@ class ViscosityCalculator(zntrack.Node):
         plt.close()
         
         # Second plot: Enhanced view up to cutoff with fixed y-axis bounds
-        cutoff_time = cutoff_idx * dt_val
-        cutoff_time_ps = cutoff_time / 1000.0  # Convert fs to ps
+        # (cutoff_time_ps already calculated above)
         
         fig2, ax = plt.subplots(1, 1, figsize=(10, 6))
         
