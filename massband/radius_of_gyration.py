@@ -82,6 +82,9 @@ class RadiusOfGyration(zntrack.Node):
                 molecule_positions = molecule_positions.reshape(
                     -1, *molecule_masses.shape, 3
                 )
+                if molecule_positions.shape[2] == 1:
+                    # molecuels with only one atom are not valid for Rg calculation
+                    continue
                 # raise ValueError(molecule_masses.shape, molecule_positions.shape)
 
                 # print(f"Processing {key} with {molecule_positions.shape} frames and {molecule_positions.shape[1]} molecules")
@@ -171,7 +174,7 @@ class RadiusOfGyration(zntrack.Node):
                 label="Std Dev across molecules",
             )
             plt.xlabel("Frame")
-            plt.ylabel("Radius of Gyration (Å)")
+            plt.ylabel("Radius of Gyration / Å")
             plt.title(f"Radius of Gyration for {smiles}")
             plt.legend()
             plt.grid(True, alpha=0.3)
@@ -180,8 +183,8 @@ class RadiusOfGyration(zntrack.Node):
 
             # --- Histogram ---
             plt.figure(figsize=(10, 6))
-            plt.hist(rg_values.flatten(), bins=50, density=True, alpha=0.75)
-            plt.xlabel("Radius of Gyration (Å)")
+            plt.hist(rg_values.flatten(), bins="auto", density=True, alpha=0.75)
+            plt.xlabel("Radius of Gyration / Å")
             plt.ylabel("Probability Density")
             plt.title(f"Rg Distribution for {smiles}")
             plt.grid(True, alpha=0.3)
@@ -237,7 +240,7 @@ class RadiusOfGyration(zntrack.Node):
                 label="Global Mean RG (Weighted)",
             )
             plt.xlabel("Frame")
-            plt.ylabel("Radius of Gyration (Å)")
+            plt.ylabel("Radius of Gyration / Å")
             plt.title("Global Mean Radius of Gyration (Weighted by Molecule Count)")
             plt.legend()
             plt.grid(True, alpha=0.3)
