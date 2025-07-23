@@ -192,3 +192,36 @@ def test_species_equals_time_start_step_stop(start, step, stop, bmim_bf4_vectra)
 
         assert concat_tbdl.shape == concat_sbdl.shape
         assert jnp.allclose(concat_tbdl, concat_sbdl, atol=1e-6)
+
+
+@pytest.mark.parametrize("com", [True, False])
+@pytest.mark.parametrize("loader_class", [TimeBatchedLoader, SpeciesBatchedLoader])
+def test_velocity_support(com, loader_class, bmim_bf4_vectra):
+    """Test that velocity properties can be requested and have matching shapes with positions"""
+    # Test with a file that might not have velocity data
+    loader = loader_class(
+        file=bmim_bf4_vectra,
+        wrap=False,
+        batch_size=10,
+        structures=None,
+        com=com,
+        properties=["position", "velocity", "masses"]
+    )
+    
+    batch_count = 0
+    for batch_output in loader:
+        batch_count += 1
+        
+        # Position should always be present
+        assert "position" in batch_output, "Position should be in output"
+        
+        # Velocity might be present (as zeros if not in file)
+        if "velocity" in batch_output:
+            # Check that shapes match when velocity is present
+            for species in batch_output["position"]:
+                pos_shape = batch_output["position"][species].shape
+                vel_shape = batch_output["velocity"][species].shape
+                assert pos_shape == vel_shape, f"Position and velocity shapes should match for {species}: {pos_shape} vs {vel_shape}"
+        
+        if batch_count >= 2:  # Test first couple batches
+            break

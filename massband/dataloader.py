@@ -22,6 +22,7 @@ class LoaderOutput(t.TypedDict, total=False):
     """
 
     position: dict[str, jnp.ndarray]
+    velocity: dict[str, jnp.ndarray]
     cell: jnp.ndarray
     inv_cell: jnp.ndarray
     masses: dict[str, jnp.ndarray]
@@ -116,13 +117,13 @@ class IndependentBatchedLoader:
     start: int = 0
     stop: int | None = None
     step: int = 1
-    properties: list[t.Literal["position", "cell", "inv-cell", "masses", "indices"]] = (
+    properties: list[t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]] = (
         dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
     )
 
     def __post_init__(self):
         self.handler = znh5md.IO(
-            self.file, variable_shape=False, include=["position", "box"]
+            self.file, variable_shape=False, include=["position", "velocity", "box"]
         )
         if self.batch_size != 1:
             log.warning(
@@ -171,6 +172,7 @@ class IndependentBatchedLoader:
             raise StopIteration
 
         pos_dict = {}
+        vel_dict = {}
         masses_dict = {}
         indices_dict = {}
         cells = []
@@ -191,7 +193,7 @@ class IndependentBatchedLoader:
                 if not mol_indices_list:
                     continue
 
-                # Collect positions and masses for each molecule
+                # Collect positions, velocities, and masses for each molecule
                 for mol_indices in mol_indices_list:
                     if self.wrap:
                         atoms.wrap()
@@ -200,6 +202,15 @@ class IndependentBatchedLoader:
 
                     pos_dict.setdefault(structure, []).append(positions)
                     masses_dict.setdefault(structure, []).append(masses)
+                    
+                    # Handle velocities if available
+                    if hasattr(atoms, 'get_velocities') and atoms.get_velocities() is not None:
+                        velocities = atoms.get_velocities()[list(mol_indices)]
+                        vel_dict.setdefault(structure, []).append(velocities)
+                    elif "velocity" in self.properties:
+                        # If velocity is requested but not available, use zero velocities
+                        zero_vel = jnp.zeros_like(positions)
+                        vel_dict.setdefault(structure, []).append(zero_vel)
 
                 # Store indices (convert tuples to arrays for consistency)
                 if structure not in indices_dict:
@@ -207,6 +218,7 @@ class IndependentBatchedLoader:
         # Convert lists to arrays, handling inhomogeneous shapes
         results = {}
         position_results = {}
+        velocity_results = {}
         masses_results = {}
 
         for k, v in pos_dict.items():
@@ -217,6 +229,14 @@ class IndependentBatchedLoader:
                 # Handle inhomogeneous shapes by keeping as list of arrays
                 position_results[k] = [jnp.array(pos) for pos in v]
 
+        for k, v in vel_dict.items():
+            try:
+                # Try to convert to regular array first
+                velocity_results[k] = jnp.array(v)
+            except ValueError:
+                # Handle inhomogeneous shapes by keeping as list of arrays
+                velocity_results[k] = [jnp.array(vel) for vel in v]
+
         for k, v in masses_dict.items():
             try:
                 # Try to convert to regular array first
@@ -226,6 +246,8 @@ class IndependentBatchedLoader:
                 masses_results[k] = [jnp.array(mass) for mass in v]
 
         results["position"] = position_results
+        if vel_dict:
+            results["velocity"] = velocity_results
         results["masses"] = masses_results
 
         # Add indices to results if requested
@@ -340,7 +362,7 @@ class TimeBatchedLoader:
     start: int = 0
     stop: int | None = None
     step: int = 1
-    properties: list[t.Literal["position", "cell", "inv-cell", "masses", "indices"]] = (
+    properties: list[t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]] = (
         dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
     )
 
@@ -349,7 +371,7 @@ class TimeBatchedLoader:
             raise NotImplementedError("Non-fixed cell handling is not implemented yet.")
 
         self.handler = znh5md.IO(
-            self.file, variable_shape=False, include=["position", "box"]
+            self.file, variable_shape=False, include=["position", "velocity", "box"]
         )
         effective_stop = self.stop if self.stop is not None else len(self.handler)
         self.total_frames = len(range(self.start, effective_stop, self.step))
@@ -416,6 +438,18 @@ class TimeBatchedLoader:
             batch[0] = self.first_frame_atoms
 
         batch_positions = jnp.array([x.get_positions() for x in batch])
+        
+        # Extract velocities if requested
+        batch_velocities = None
+        if "velocity" in self.properties:
+            velocities_list = []
+            for atoms in batch:
+                if hasattr(atoms, 'get_velocities') and atoms.get_velocities() is not None:
+                    velocities_list.append(atoms.get_velocities())
+                else:
+                    # Use zero velocities if not available
+                    velocities_list.append(jnp.zeros_like(atoms.get_positions()))
+            batch_velocities = jnp.array(velocities_list)
 
         # Prepend the last wrapped position from the previous batch to provide context
         positions_with_context = jnp.concatenate(
@@ -462,6 +496,29 @@ class TimeBatchedLoader:
                     )
                 position_results[structure] = pos
             output["position"] = position_results
+
+        if "velocity" in self.properties and batch_velocities is not None:
+            velocity_data = defaultdict(list)
+            for structure, all_mols in self.indices.items():
+                if not all_mols:
+                    continue
+                mol_indices_array = jnp.array(all_mols)
+                if not self.com:
+                    atom_indices = mol_indices_array.flatten()
+                    velocity_data[structure] = batch_velocities[:, atom_indices, :]
+                else:
+                    # Compute COM velocity: sum(m_i * v_i) / sum(m_i)
+                    mol_velocities = batch_velocities[:, mol_indices_array, :]
+                    masses = self.masses[mol_indices_array]
+                    total_mol_mass = jnp.sum(masses, axis=1)
+                    numerator = jnp.sum(mol_velocities * masses[None, :, :, None], axis=2)
+                    com_vel = numerator / total_mol_mass[None, :, None]
+                    velocity_data[structure] = com_vel
+
+            velocity_results = {}
+            for structure, vel in velocity_data.items():
+                velocity_results[structure] = vel
+            output["velocity"] = velocity_results
 
         if "masses" in self.properties:
             masses_data = {}
@@ -602,7 +659,7 @@ class SpeciesBatchedLoader:
     stop: int | None = None
     step: int = 1
     memory: bool = False
-    properties: list[t.Literal["position", "cell", "inv-cell", "masses", "indices"]] = (
+    properties: list[t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]] = (
         dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
     )
 
@@ -611,7 +668,7 @@ class SpeciesBatchedLoader:
             raise NotImplementedError("Non-fixed cell handling is not implemented yet.")
 
         self.handler = znh5md.IO(
-            self.file, variable_shape=False, include=["position", "box"]
+            self.file, variable_shape=False, include=["position", "velocity", "box"]
         )
         effective_stop = self.stop if self.stop is not None else len(self.handler)
         self.total_frames = len(range(self.start, effective_stop, self.step))
@@ -681,6 +738,18 @@ class SpeciesBatchedLoader:
             [frame.get_positions()[atom_indices_flat] for frame in sliced_frames]
         )
 
+        # Extract velocities if requested
+        raw_velocities = None
+        if "velocity" in self.properties:
+            velocities_list = []
+            for frame in sliced_frames:
+                if hasattr(frame, 'get_velocities') and frame.get_velocities() is not None:
+                    velocities_list.append(frame.get_velocities()[atom_indices_flat])
+                else:
+                    # Use zero velocities if not available
+                    velocities_list.append(jnp.zeros_like(frame.get_positions()[atom_indices_flat]))
+            raw_velocities = jnp.array(velocities_list)
+
         # Unwrap the full trajectory slice for this species using the image flag method
         unwrapped_pos = unwrap_trajectory_image_flags(
             raw_positions, self.cell, self.inv_cell
@@ -688,6 +757,7 @@ class SpeciesBatchedLoader:
 
         if not self.com:
             pos = unwrapped_pos
+            vel = raw_velocities if raw_velocities is not None else None
         else:
             n_mols_in_batch = mol_indices_array.shape[0]
             n_atoms_per_mol = mol_indices_array.shape[1]
@@ -698,6 +768,16 @@ class SpeciesBatchedLoader:
             total_mol_mass = jnp.sum(masses, axis=1)
             numerator = jnp.sum(mol_positions * masses[None, :, :, None], axis=2)
             pos = numerator / total_mol_mass[None, :, None]
+            
+            # Compute COM velocity if velocities are available
+            if raw_velocities is not None:
+                mol_velocities = raw_velocities.reshape(
+                    self.total_frames, n_mols_in_batch, n_atoms_per_mol, 3
+                )
+                vel_numerator = jnp.sum(mol_velocities * masses[None, :, :, None], axis=2)
+                vel = vel_numerator / total_mol_mass[None, :, None]
+            else:
+                vel = None
 
         if self.wrap:
             pos = wrap_positions(pos, self.cell, self.inv_cell)
@@ -707,6 +787,9 @@ class SpeciesBatchedLoader:
 
         if "position" in self.properties:
             output["position"] = {structure: pos}
+
+        if "velocity" in self.properties and vel is not None:
+            output["velocity"] = {structure: vel}
 
         if "masses" in self.properties:
             if not self.com:
