@@ -32,7 +32,7 @@ def plot_rdf(
     axes = axes.flatten()
 
     for ax, ((label_a, label_b), g_r) in zip(axes, rdfs.items()):
-        r = 0.5 * (np.arange(len(g_r)) + 0.5) * bin_width
+        r = np.arange(len(g_r)) * bin_width
 
         # Safety check for extreme values
         if not np.all(np.isfinite(r)) or not np.all(np.isfinite(g_r)):

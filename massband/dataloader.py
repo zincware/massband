@@ -360,6 +360,16 @@ class TimeBatchedLoader:
             log.info(f"Loading {self.total_frames} frames into memory...")
             self.handler = self.handler[self.start : self.stop : self.step]
             self.start, self.step = 0, 1
+        
+        # check the indices did not change by looking at the first / last frame masses
+        m0 = self.handler[self.start].get_masses()
+        m1 = self.handler[effective_stop - 1].get_masses()
+        if not jnp.array_equal(m0, m1):
+            raise ValueError(
+                "The masses of the first and last frames do not match. "
+                "This indicates that the indices of atoms/molecules have changed, "
+                "which is not supported by TimeBatchedLoader."
+            )
 
         first_frame_raw = self.handler[0]
         self.first_frame_atoms = rdkit2ase.unwrap_structures(first_frame_raw)
