@@ -40,15 +40,19 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
 
         for kind, data in self.diffusion.results.items():
             n_ions = data["occurrences"]
-            diff = data["diffusion_coefficient"] * ureg.angstrom**2 / ureg.nanosecond
+            diff = data["diffusion_coefficient"] * ureg.centimeter**2 / ureg.second
             mol = Chem.MolFromSmiles(kind)
             charge = sum(atom.GetFormalCharge() for atom in mol.GetAtoms())
+            if charge == 0:
+                print(f"Skipping {kind} with no charge")
+                continue
             print(f"Using {n_ions} x {kind} with charge {charge} and diffusion {diff}")
 
             value = diff * (charge) ** 2 * n_ions
             values.append(value)
 
         sigma_nernst_einst = (prefactor * sum(values)).to("S/m")
+        print(f"Computed Nernst-Einstein ionic conductivity: {sigma_nernst_einst}")
 
         self.metrics = {
             "Nernst-Einstein ionic conductivity": sigma_nernst_einst.magnitude
