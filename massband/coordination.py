@@ -3,9 +3,12 @@
 import logging
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import zntrack
 from scipy.integrate import simpson
+from scipy.ndimage import uniform_filter1d
+from scipy.signal import argrelmin
 
 from massband.rdf import RadialDistributionFunction
 
@@ -19,6 +22,13 @@ class CoordinationNumber(zntrack.Node):
     the coordination number for the first shell of each RDF pair by integrating
     the RDF up to the first minimum. The number density is automatically
     calculated from the ASE atoms object's cell volume and atom count.
+
+    Parameters
+    ----------
+    density_threshold : float, default=0.1
+        Threshold for finding first minimum in RDF (dimensionless).
+    max_integration_distance : float, default=10.0
+        Maximum distance to consider for integration (Å).
     """
 
     rdf: RadialDistributionFunction = zntrack.deps()
@@ -60,9 +70,6 @@ class CoordinationNumber(zntrack.Node):
 
         # Find local minima
         # Smooth the data slightly to avoid noise-induced minima
-        from scipy.ndimage import uniform_filter1d
-        from scipy.signal import argrelmin
-
         g_r_smooth = uniform_filter1d(g_r_filtered, size=3)
 
         minima_indices = argrelmin(g_r_smooth, order=2)[0]
@@ -154,8 +161,6 @@ class CoordinationNumber(zntrack.Node):
         number_density : float
             Number density used for coordination number calculation.
         """
-        import matplotlib.pyplot as plt
-
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10))
 
         # Top plot: RDF with integration range

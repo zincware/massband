@@ -5,6 +5,11 @@ import pytest
 from massband.coordination import CoordinationNumber
 from massband.rdf import RadialDistributionFunction
 
+# Reference coordination numbers calculated from EC-EMC test system
+# These values were computed using the coordination number analysis with:
+# - density_threshold=0.5, max_integration_distance=8.0, bin_width=0.1
+# - First 1000 frames of the EC-EMC trajectory
+# Values represent the coordination number for each atom pair's first shell
 cn = {
     "C|C": 2.511757715067251,
     "C|F": 9.562391799136192,
@@ -29,6 +34,9 @@ cn = {
     "P|P": 12.954374155862542,
 }
 
+# Reference first shell distances (in Å) for each atom pair
+# These represent the distance to the first minimum in the RDF for each pair
+# Computed from the same EC-EMC test system and parameters as above
 dist = {
     "C|C": 2.75,
     "C|F": 4.55,

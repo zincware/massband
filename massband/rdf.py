@@ -299,7 +299,7 @@ class RadialDistributionFunction(zntrack.Node):
         cells = loader.first_frame_atoms.get_cell()[:]
         # structure_names = list(first_batch_data.keys())
         structure_names = list(loader.indices.keys())
-        
+
         # Calculate and store number density from first frame atoms
         first_frame_atoms = loader.first_frame_atoms
         volume = first_frame_atoms.get_volume()
