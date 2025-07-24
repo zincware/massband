@@ -107,6 +107,16 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
         print(f"{bootstrap.n = }")
         print(f"{bootstrap.s = }")
         print(f"{bootstrap.sigma = }")
+        
+        # Calculate ionic conductivity and confidence interval
+        sigma_samples = bootstrap.sigma.samples if hasattr(bootstrap.sigma, 'samples') else bootstrap.sigma
+        sigma_mean = np.mean(sigma_samples)
+        sigma_std = np.std(sigma_samples)
+        sigma_95_ci = np.percentile(sigma_samples, [2.5, 97.5])
+        
+        print("\nIonic Conductivity Results:")
+        print(f"Ionic Conductivity: {sigma_mean:.6f} ± {sigma_std:.6f} mS/cm")
+        print(f"95% Confidence Interval: [{sigma_95_ci[0]:.6f}, {sigma_95_ci[1]:.6f}] mS/cm")
 
         # distribution = (
         #     bootstrap.gradient.samples * bootstrap.dt[:, np.newaxis]
