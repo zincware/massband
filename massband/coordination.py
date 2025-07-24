@@ -194,8 +194,6 @@ class CoordinationNumber(zntrack.Node):
 
         # Bottom plot: Running coordination number
         running_cn = np.zeros_like(r)
-        # Use the same number density as the fitted coordination number
-        estimated_density = number_density
 
         for i in range(1, len(r)):
             mask = r <= r[i]
@@ -203,7 +201,7 @@ class CoordinationNumber(zntrack.Node):
             g_r_temp = g_r[mask]
             if len(r_temp) > 1:
                 integrand = 4 * np.pi * r_temp**2 * g_r_temp
-                running_cn[i] = estimated_density * np.trapezoid(integrand, r_temp)
+                running_cn[i] = number_density * np.trapezoid(integrand, r_temp)
 
         ax2.plot(r, running_cn, "g-", linewidth=2, label="Running CN")
         ax2.axvline(first_min_distance, color="red", linestyle="--")
