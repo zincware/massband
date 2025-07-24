@@ -13,9 +13,9 @@ log = logging.getLogger(__name__)
 
 
 def plot_rdf_individual(
-    label_a: str, 
-    label_b: str, 
-    g_r: np.ndarray, 
+    label_a: str,
+    label_b: str,
+    g_r: np.ndarray,
     save_path: Path,
     bin_width: float = 0.1,
     smoothing_sigma: float = 2.0,
@@ -27,12 +27,12 @@ def plot_rdf_individual(
     n_samples: int = 1000,
 ):
     """Plot a single RDF with peak fitting and uncertainty visualization.
-    
+
     Parameters
     ----------
     label_a : str
         Label for the first species
-    label_b : str  
+    label_b : str
         Label for the second species
     g_r : np.ndarray
         RDF values
@@ -126,9 +126,7 @@ def plot_rdf_individual(
             )
         else:
             ax.plot(r, peak_fit.lower_ci, "k--", alpha=0.3)
-            ax.plot(
-                r, peak_fit.upper_ci, "k--", alpha=0.3, label=f"{int(ci * 100)}% CI"
-            )
+            ax.plot(r, peak_fit.upper_ci, "k--", alpha=0.3, label=f"{int(ci * 100)}% CI")
 
         ax.axvline(
             peak_fit.r_peak,
@@ -158,12 +156,8 @@ def plot_rdf_individual(
     ax.set_ylim(0, min(np.max(g_r) * 1.1, 10))  # Cap y-axis at reasonable values
     ax.xaxis.set_major_locator(ticker.MultipleLocator(1.0))  # 1 Å major ticks
     ax.xaxis.set_minor_locator(ticker.MultipleLocator(0.2))  # 0.2 Å minor ticks
-    ax.yaxis.set_major_locator(
-        ticker.MultipleLocator(0.5)
-    )  # 0.5 major ticks for g(r)
-    ax.yaxis.set_minor_locator(
-        ticker.MultipleLocator(0.1)
-    )  # 0.1 minor ticks for g(r)
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(0.5))  # 0.5 major ticks for g(r)
+    ax.yaxis.set_minor_locator(ticker.MultipleLocator(0.1))  # 0.1 minor ticks for g(r)
     ax.grid(True, which="major", linestyle="-", linewidth=0.8, alpha=0.8)
     ax.grid(True, which="minor", linestyle=":", linewidth=0.5, alpha=0.3)
 
@@ -185,7 +179,7 @@ def plot_rdf(
     n_samples: int = 1000,
 ):
     """Plot individual RDF files for each species pair.
-    
+
     Parameters
     ----------
     rdfs : DefaultDict[Tuple[str, str], np.ndarray]
@@ -211,12 +205,12 @@ def plot_rdf(
     """
     # Ensure save directory exists
     save_dir.mkdir(parents=True, exist_ok=True)
-    
+
     for (label_a, label_b), g_r in rdfs.items():
         # Create filename for this RDF pair
         pair_name = f"{label_a}_{label_b}".replace("|", "_")
         save_path = save_dir / f"rdf_{pair_name}.png"
-        
+
         plot_rdf_individual(
             label_a=label_a,
             label_b=label_b,
