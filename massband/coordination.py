@@ -19,16 +19,11 @@ class CoordinationNumber(zntrack.Node):
     """Calculate coordination numbers from RDF data.
 
     This node depends on RadialDistributionFunction results and calculates
-    the coordination number for the first shell of each RDF pair by integrating
-    the RDF up to the first minimum. The number density is automatically
-    calculated from the ASE atoms object's cell volume and atom count.
-
-    Parameters
-    ----------
-    density_threshold : float, default=0.1
-        Threshold for finding first minimum in RDF (dimensionless).
-    max_integration_distance : float, default=10.0
-        Maximum distance to consider for integration (Å).
+    the coordination number (CN) for the first shell of each RDF pair.
+    The CN is found by integrating the RDF up to its first minimum.
+    For a pair of species A and B, it calculates both CN(A-B) (B around A)
+    and CN(B-A) (A around B) by using the respective partial number densities
+    provided by the upstream RadialDistributionFunction node.
     """
 
     rdf: RadialDistributionFunction = zntrack.deps()
@@ -45,49 +40,29 @@ class CoordinationNumber(zntrack.Node):
     figures: Path = zntrack.outs_path(zntrack.nwd / "coordination_figures")
 
     def _find_first_minimum(self, r: np.ndarray, g_r: np.ndarray) -> float:
-        """Find the position of the first minimum in the RDF.
-
-        Parameters
-        ----------
-        r : np.ndarray
-            Distance array.
-        g_r : np.ndarray
-            RDF values.
-
-        Returns
-        -------
-        float
-            Distance of the first minimum.
-        """
-        # Only consider data beyond r=1.0 Å to avoid spurious minima at very short distances
+        """Find the position of the first minimum in the RDF."""
+        # Only consider data beyond r=1.0 Å to avoid spurious minima
         mask = r > 1.0
-        r_filtered = r[mask]
-        g_r_filtered = g_r[mask]
+        r_filtered, g_r_filtered = r[mask], g_r[mask]
 
         if len(r_filtered) == 0:
-            log.warning("No data points beyond 1.0 Å, using maximum integration distance")
+            log.warning(
+                "No data points beyond 1.0 Å, using maximum integration distance."
+            )
             return self.max_integration_distance
 
-        # Find local minima
-        # Smooth the data slightly to avoid noise-induced minima
         g_r_smooth = uniform_filter1d(g_r_filtered, size=3)
-
         minima_indices = argrelmin(g_r_smooth, order=2)[0]
 
         if len(minima_indices) == 0:
-            log.warning("No minima found, using maximum integration distance")
+            log.warning("No minima found in RDF, using maximum integration distance.")
             return self.max_integration_distance
 
-        # Find the first minimum that is below the density threshold
         for idx in minima_indices:
             if g_r_smooth[idx] < self.density_threshold:
-                first_min_distance = r_filtered[idx]
-                # Ensure we don't integrate beyond our maximum distance
-                return min(first_min_distance, self.max_integration_distance)
+                return min(r_filtered[idx], self.max_integration_distance)
 
-        # If no minimum below threshold found, use the first minimum
-        first_min_distance = r_filtered[minima_indices[0]]
-        return min(first_min_distance, self.max_integration_distance)
+        return min(r_filtered[minima_indices[0]], self.max_integration_distance)
 
     def _calculate_coordination_number(
         self,
@@ -96,44 +71,19 @@ class CoordinationNumber(zntrack.Node):
         number_density: float,
         first_min_distance: float,
     ) -> float:
-        """Calculate coordination number by integrating RDF.
-
-        Parameters
-        ----------
-        r : np.ndarray
-            Distance array.
-        g_r : np.ndarray
-            RDF values.
-        number_density : float
-            Number density of the system.
-        first_min_distance : float
-            Distance to integrate up to.
-
-        Returns
-        -------
-        float
-            Coordination number.
-        """
-        # Create mask for integration range
+        """Calculate coordination number by integrating RDF."""
         mask = r <= first_min_distance
-        r_int = r[mask]
-        g_r_int = g_r[mask]
+        r_int, g_r_int = r[mask], g_r[mask]
 
         if len(r_int) < 2:
-            log.warning("Insufficient data points for integration")
+            log.warning("Insufficient data points for integration.")
             return 0.0
 
-        # Calculate coordination number: CN = 4π * ρ * ∫[0 to r_min] r² * g(r) dr
         integrand = 4 * np.pi * r_int**2 * g_r_int
-
-        # Use Simpson's rule for integration
         try:
-            coordination_number = number_density * simpson(integrand, r_int)
-        except ValueError:
-            # Fall back to trapezoidal rule if Simpson's rule fails
-            coordination_number = number_density * np.trapezoid(integrand, r_int)
-
-        return coordination_number
+            return number_density * simpson(integrand, r_int)
+        except (ValueError, IndexError):
+            return number_density * np.trapezoid(integrand, r_int)
 
     def _plot_coordination_analysis(
         self,
@@ -143,88 +93,67 @@ class CoordinationNumber(zntrack.Node):
         first_min_distance: float,
         coordination_number: float,
         number_density: float,
+        title_override: str = None,
     ):
-        """Create a plot showing the RDF and coordination number analysis.
+        """Create a plot showing the RDF and coordination number analysis."""
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10), constrained_layout=True)
 
-        Parameters
-        ----------
-        pair_name : str
-            Name of the atomic/molecular pair.
-        r : np.ndarray
-            Distance array.
-        g_r : np.ndarray
-            RDF values.
-        first_min_distance : float
-            Distance of first minimum.
-        coordination_number : float
-            Calculated coordination number.
-        number_density : float
-            Number density used for coordination number calculation.
-        """
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10))
+        title = title_override or f"RDF Analysis: {pair_name}"
+        fig.suptitle(title, fontsize=16)
 
-        # Top plot: RDF with integration range
+        # Top plot: RDF
         ax1.plot(r, g_r, "b-", label="g(r)", linewidth=2)
         ax1.axvline(
             first_min_distance,
-            color="red",
-            linestyle="--",
-            label=f"1st minimum: {first_min_distance:.2f} Å",
+            color="r",
+            ls="--",
+            label=f"1st min: {first_min_distance:.2f} Å",
         )
         ax1.fill_between(
             r[r <= first_min_distance],
             g_r[r <= first_min_distance],
+            color="g",
             alpha=0.3,
-            color="green",
             label="Integration region",
         )
         ax1.axhline(
             self.density_threshold,
-            color="gray",
-            linestyle=":",
+            color="grey",
+            ls=":",
             label=f"Density threshold: {self.density_threshold}",
         )
-
         ax1.set_xlabel("Distance r (Å)")
         ax1.set_ylabel("g(r)")
-        ax1.set_title(f"RDF: {pair_name}")
+        ax1.set_title("Radial Distribution Function")
         ax1.legend()
         ax1.grid(True, alpha=0.3)
         ax1.set_xlim(0, min(np.max(r), 15))
 
-        # Bottom plot: Running coordination number
+        # Bottom plot: Running CN
         running_cn = np.zeros_like(r)
-
         for i in range(1, len(r)):
             mask = r <= r[i]
-            r_temp = r[mask]
-            g_r_temp = g_r[mask]
-            if len(r_temp) > 1:
-                integrand = 4 * np.pi * r_temp**2 * g_r_temp
-                running_cn[i] = number_density * np.trapezoid(integrand, r_temp)
+            if np.sum(mask) > 1:
+                integrand = 4 * np.pi * r[mask] ** 2 * g_r[mask]
+                running_cn[i] = number_density * np.trapezoid(integrand, r[mask])
 
         ax2.plot(r, running_cn, "g-", linewidth=2, label="Running CN")
-        ax2.axvline(first_min_distance, color="red", linestyle="--")
+        ax2.axvline(first_min_distance, color="r", ls="--")
         ax2.axhline(
             coordination_number,
-            color="blue",
-            linestyle="-",
-            label=f"CN = {coordination_number:.2f}",
+            color="b",
+            ls="-",
+            label=f"Final CN = {coordination_number:.2f}",
         )
-
         ax2.set_xlabel("Distance r (Å)")
         ax2.set_ylabel("Coordination Number")
-        ax2.set_title(f"Running Coordination Number: {pair_name}")
+        ax2.set_title("Running Coordination Number")
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(0, min(np.max(r), 15))
-        # Limit y-axis to 4x the fitted coordination number for better visibility
-        ax2.set_ylim(0, max(coordination_number * 4, 5))
+        ax2.set_ylim(0, max(coordination_number * 2.5, 5))
 
-        plt.tight_layout()
-
-        # Save the plot
-        safe_pair_name = pair_name.replace("|", "_").replace(" ", "_")
+        safe_pair_name = pair_name.replace("|", "_").replace("-", "_").replace(" ", "_")
         save_path = self.figures / f"coordination_{safe_pair_name}.png"
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
@@ -232,56 +161,74 @@ class CoordinationNumber(zntrack.Node):
     def run(self):
         """Calculate coordination numbers for all RDF pairs."""
         self.figures.mkdir(parents=True, exist_ok=True)
-
         self.coordination_numbers = {}
         self.first_shell_distances = {}
 
-        # Get the bin width from the RDF node
         bin_width = self.rdf.bin_width
+        partial_densities = self.rdf.partial_number_densities
 
         log.info(
-            f"Calculating coordination numbers for {len(self.rdf.results)} RDF pairs"
+            f"Calculating coordination numbers using partial densities: {partial_densities}"
         )
 
         for pair_key, g_r_list in self.rdf.results.items():
-            # Convert to numpy array
             g_r = np.array(g_r_list)
-
-            # Create distance array (bin centers)
             r = np.arange(len(g_r)) * bin_width + bin_width / 2.0
 
-            # Skip if data is empty or has issues
             if len(g_r) == 0 or not np.all(np.isfinite(g_r)):
-                log.warning(f"Skipping {pair_key} due to invalid data")
+                log.warning(f"Skipping '{pair_key}' due to invalid RDF data.")
                 continue
 
-            # Find first minimum
+            try:
+                species_A, species_B = pair_key.split("|")
+            except ValueError:
+                log.error(
+                    f"Could not parse pair key '{pair_key}'. Assumes 'A|B' format. Skipping."
+                )
+                continue
+
+            # Find the first minimum, which is common for both calculations (A-B and B-A)
             first_min_distance = self._find_first_minimum(r, g_r)
-            self.first_shell_distances[pair_key] = first_min_distance
 
-            # Get number density from RDF calculation (computed from ASE atoms object)
-            estimated_number_density = self.rdf.number_density
+            # --- Perform two calculations for each pair: A-B and B-A ---
+            # The order of species in the tuple determines which density is used.
+            # (Center, Neighbor) -> use density of Neighbor
+            calculations = [(species_A, species_B)]
+            if species_A != species_B:
+                calculations.append((species_B, species_A))
 
-            # Calculate coordination number
-            coordination_number = self._calculate_coordination_number(
-                r, g_r, estimated_number_density, first_min_distance
-            )
+            for center_species, neighbor_species in calculations:
+                cn_key = f"{center_species}|{neighbor_species}"
+                rho_neighbor = partial_densities.get(neighbor_species)
 
-            self.coordination_numbers[pair_key] = coordination_number
+                if rho_neighbor is None:
+                    log.error(
+                        f"Partial density for '{neighbor_species}' not found. Cannot calculate CN for '{cn_key}'."
+                    )
+                    continue
 
-            # Create analysis plot
-            self._plot_coordination_analysis(
-                pair_key,
-                r,
-                g_r,
-                first_min_distance,
-                coordination_number,
-                estimated_number_density,
-            )
+                # Calculate the coordination number
+                cn = self._calculate_coordination_number(
+                    r, g_r, rho_neighbor, first_min_distance
+                )
+                self.coordination_numbers[cn_key] = cn
+                self.first_shell_distances[cn_key] = first_min_distance
 
-            log.info(
-                f"{pair_key}: CN = {coordination_number:.2f}, "
-                f"1st shell = {first_min_distance:.2f} Å"
-            )
+                log.info(
+                    f"CN for '{cn_key}' (neighbors around center): {cn:.2f} "
+                    f"[shell at {first_min_distance:.2f} Å, ρ({neighbor_species})={rho_neighbor:.4f} Å⁻³]"
+                )
 
-        log.info("Coordination number analysis completed")
+                # Create analysis plot with a descriptive title
+                plot_title = f"Coordination of {neighbor_species} around {center_species}"
+                self._plot_coordination_analysis(
+                    pair_name=cn_key,
+                    r=r,
+                    g_r=g_r,
+                    first_min_distance=first_min_distance,
+                    coordination_number=cn,
+                    number_density=rho_neighbor,
+                    title_override=plot_title,
+                )
+
+        log.info("✅ Coordination number analysis completed.")
