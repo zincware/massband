@@ -60,7 +60,7 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
             if data_file.exists():
                 with open(data_file, "rb") as f:
                     diffusion_plot_data = pickle.load(f)
-                D_samples = diffusion_plot_data.D_samples
+                D_samples = diffusion_plot_data.samples
             else:
                 # Fallback: create samples from mean and std if pickle not available
                 D_mean = data["diffusion_coefficient"]
