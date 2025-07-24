@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import numpy as np
 from jax import jit
 
 
@@ -19,14 +20,13 @@ def unwrap_positions(
 
     # Cumulatively sum the unwrapped displacements to get the unwrapped trajectory
     unwrapped_positions = jnp.concatenate(
-        [positions[0][jnp.newaxis, ...], positions[0] + jnp.cumsum(unscaled_displacements, axis=0)],
+        [
+            positions[0][jnp.newaxis, ...],
+            positions[0] + jnp.cumsum(unscaled_displacements, axis=0),
+        ],
         axis=0,
     )
     return unwrapped_positions
-
-import jax.numpy as jnp
-import numpy as np
-from jax import jit
 
 
 @jit

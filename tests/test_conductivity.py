@@ -1,7 +1,9 @@
 # from massband import KinisiEinsteinHelfandIonicConductivity
-import massband
 import os
+
 import pytest
+
+import massband
 
 ec_emc_results = {
     "ionic_conductivity": 8.488344970206363,

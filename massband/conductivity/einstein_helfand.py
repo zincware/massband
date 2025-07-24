@@ -11,8 +11,8 @@ from rdkit import Chem
 from tqdm import tqdm
 
 from massband.dataloader import TimeBatchedLoader
-from massband.plotting.kinisi import PlottingConfig, plot_kinisi_results
 from massband.kinisi import KinisiPlotData
+from massband.plotting.kinisi import PlottingConfig, plot_kinisi_results
 
 
 class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
@@ -78,9 +78,7 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
                 numbers.extend([specie_idx] * len(positions[key][frame_idx]))
 
             frame_positions = np.array(frame_positions)
-            atoms = ase.Atoms(
-                positions=frame_positions, cell=(100000, 100000, 1000000)
-            )
+            atoms = ase.Atoms(positions=frame_positions, cell=(100000, 100000, 1000000))
             frames.append(atoms)
 
         diff = ASEParser(
@@ -168,12 +166,12 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             displacement_unit="\u00c5$^2$",
             value_label="\u03c3",
             value_unit="mS cm$^{-1}$",
-            msd_title=f"system Mean Squared Charge Displacement with std",
-            msd_filename=f"system_mscd_std.png",
-            ci_title=f"system MSCD credible intervals",
-            ci_filename=f"system_mscd_credible_intervals.png",
-            hist_title=f"system Ionic Conductivity Histogram",
-            hist_filename=f"system_conductivity_hist.png",
+            msd_title="system Mean Squared Charge Displacement with std",
+            msd_filename="system_mscd_std.png",
+            ci_title="system MSCD credible intervals",
+            ci_filename="system_mscd_credible_intervals.png",
+            hist_title="system Ionic Conductivity Histogram",
+            hist_filename="system_conductivity_hist.png",
             hist_label="Mean (\u03c3_n)",
         )
         for pkl_path in self.data_path.glob("*.pkl"):

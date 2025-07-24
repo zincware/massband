@@ -1,4 +1,5 @@
 """Centralized plotting for kinisi-based analysis."""
+
 import dataclasses
 import logging
 from pathlib import Path
@@ -73,7 +74,9 @@ def plot_kinisi_results(
     try:
         fig.savefig(data_path / config.msd_filename, dpi=300)
     except FileNotFoundError:
-        log.warning("Could not save plot %s. Does the directory exist?", config.msd_filename)
+        log.warning(
+            "Could not save plot %s. Does the directory exist?", config.msd_filename
+        )
     plt.close(fig)
 
     # Displacement with credible intervals plot
@@ -90,7 +93,9 @@ def plot_kinisi_results(
     try:
         fig.savefig(data_path / config.ci_filename, dpi=300)
     except FileNotFoundError:
-        log.warning("Could not save plot %s. Does the directory exist?", config.ci_filename)
+        log.warning(
+            "Could not save plot %s. Does the directory exist?", config.ci_filename
+        )
     plt.close(fig)
 
     # Histogram plot
@@ -128,5 +133,7 @@ def plot_kinisi_results(
     try:
         fig.savefig(data_path / config.hist_filename, dpi=300)
     except FileNotFoundError:
-        log.warning("Could not save plot %s. Does the directory exist?", config.hist_filename)
+        log.warning(
+            "Could not save plot %s. Does the directory exist?", config.hist_filename
+        )
     plt.close(fig)
