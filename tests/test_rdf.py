@@ -45,7 +45,8 @@ def test_rdf_node_smiles(tmp_path, ec_emc, ec_emc_smiles):
     for smile in expected:
         assert len(node.results[smile]) == 285
 
-    assert (node.figures / "rdf.png").exists()
+    # Check that individual RDF plot files exist
+    assert any(node.figures.glob("rdf_*.png")), "No individual RDF plot files found"
 
 
 def test_rdf_node_full(tmp_path, ec_emc):

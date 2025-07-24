@@ -374,7 +374,7 @@ class RadialDistributionFunction(zntrack.Node):
         # TODO: something is wrong with the bin_edges!
         plot_rdf(
             self.results,
-            self.figures / "rdf.png",
+            self.figures,
             bin_width=self.bin_width,
             bayesian=self.bayesian,
             fit_method=self.fit_method,
