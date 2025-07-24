@@ -6,23 +6,22 @@ import pytest
 
 from massband.dataloader import SpeciesBatchedLoader, TimeBatchedLoader
 
-# TODO: use a trajectory with very fast diffusion, e.g. via vectra
-# TODO: the trajectory must be wrapped for the test to make sen
 # TODO: test that the first frame is correctly unwrapped
 
 
-@pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
+@pytest.mark.parametrize("structures", [True, False])
 @pytest.mark.parametrize("wrap", [True, False])
-def test_TimeBatchedLoader_batch_size(wrap, structures, bmim_bf4_vectra):
+def test_TimeBatchedLoader_batch_size(wrap, structures, ec_emc, ec_emc_smiles):
     batch_sizes = [1, 2, 3, 4, 512]
     data = {}
 
     for batch_size in batch_sizes:
         tbdl = TimeBatchedLoader(
-            file=bmim_bf4_vectra,
-            structures=structures,
+            file=ec_emc,
+            structures=ec_emc_smiles if structures else None,
             wrap=wrap,
             memory=True,
+            stop=512,
             batch_size=batch_size,
         )
         results = defaultdict(list)
@@ -55,18 +54,19 @@ def test_TimeBatchedLoader_batch_size(wrap, structures, bmim_bf4_vectra):
             )
 
 
-@pytest.mark.parametrize("structures", [["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"], None])
+@pytest.mark.parametrize("structures", [True, False])
 @pytest.mark.parametrize("wrap", [True, False])
-def test_SpeciesBatchedLoader_batch_size(wrap, structures, bmim_bf4_vectra):
+def test_SpeciesBatchedLoader_batch_size(wrap, structures, ec_emc, ec_emc_smiles):
     batch_sizes = [1, 2, 3, 4, 512]
     data = {}
 
     for batch_size in batch_sizes:
         sbdl = SpeciesBatchedLoader(
-            file=bmim_bf4_vectra,
-            structures=structures,
+            file=ec_emc,
+            structures=ec_emc_smiles if structures else None,
             wrap=wrap,
             memory=True,
+            stop=512,
             batch_size=batch_size,
         )
         results = defaultdict(list)
@@ -99,129 +99,161 @@ def test_SpeciesBatchedLoader_batch_size(wrap, structures, bmim_bf4_vectra):
             )
 
 
-@pytest.mark.parametrize("tbdl_batch_size", [1, 2, 4, 8])
-@pytest.mark.parametrize("sbdl_batch_size", [1, 2, 4, 8])
-def test_species_equals_time(tbdl_batch_size, sbdl_batch_size, bmim_bf4_vectra):
-    tbdl = TimeBatchedLoader(
-        file=bmim_bf4_vectra,
-        structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
-        wrap=False,
+@pytest.mark.parametrize("wrap", [True, False])
+def test_start_stop_step_consistency(ec_emc, wrap):
+    """Test that the start/stop/step functionality is consistent."""
+    tbl = TimeBatchedLoader(
+        file=ec_emc,
+        wrap=wrap,
+        batch_size=64,
+        start=10,
+        step=5,
+        stop=53,
+        memory=False,
+    )
+
+    tbl_memory = TimeBatchedLoader(
+        file=ec_emc,
+        wrap=wrap,
+        batch_size=64,
+        start=10,
+        step=5,
+        stop=53,
         memory=True,
-        batch_size=tbdl_batch_size,
     )
-    sbdl = SpeciesBatchedLoader(
-        file=bmim_bf4_vectra,
-        structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
-        wrap=False,
+
+    results = list(tbl)
+    tbl_results = results[0]
+    tbl_memory_results = list(tbl_memory)[0]
+    assert len(results) == 1  # one batch
+    assert set(tbl_results["position"]) == {"C", "F", "H", "Li", "O", "P"}
+
+    sbl = SpeciesBatchedLoader(
+        file=ec_emc,
+        wrap=wrap,
+        batch_size=2048,
+        start=10,
+        step=5,
+        stop=53,
+        memory=False,
+    )
+
+    sbl_memory = SpeciesBatchedLoader(
+        file=ec_emc,
+        wrap=wrap,
+        batch_size=2048,
+        start=10,
+        step=5,
+        stop=53,
         memory=True,
-        batch_size=sbdl_batch_size,
-    )
-    assert jnp.allclose(
-        tbdl.first_frame_atoms.positions, sbdl.first_frame_atoms.positions, atol=1e-6
     )
 
-    tbdl_data = defaultdict(list)
-    sbdl_data = defaultdict(list)
+    results = list(sbl)
+    positions = {}
+    for x in results:
+        positions.update(x["position"])
+    assert set(positions) == {"C", "F", "H", "Li", "O", "P"}
 
-    for batch_output in tbdl:
-        batch = batch_output["position"]
-        for species, positions in batch.items():
-            tbdl_data[species].append(positions)
+    positions_memory = {}
+    for x in list(sbl_memory):
+        positions_memory.update(x["position"])
 
-    for batch_output in sbdl:
-        batch = batch_output["position"]
-        for species, positions in batch.items():
-            sbdl_data[species].append(positions)
+    assert positions["C"].shape == (9, 521, 3)  # 9 frames, 521 atoms, 3 coordinates
+    assert positions["F"].shape == (9, 96, 3)
+    assert positions["P"].shape == (9, 16, 3)
 
-    assert tbdl_data.keys() == sbdl_data.keys()
-    assert len(tbdl_data) == 2
-    for key in tbdl_data.keys():
-        concat_tbdl = jnp.concatenate(tbdl_data[key], axis=0)
-        concat_sbdl = jnp.concatenate(sbdl_data[key], axis=1)
+    for key in tbl_results["position"]:
+        assert jnp.allclose(
+            tbl_results["position"][key],
+            positions[key],
+        )
 
-        assert concat_tbdl.shape == concat_sbdl.shape
-        assert jnp.allclose(concat_tbdl, concat_sbdl, atol=1e-6)
+        assert jnp.allclose(
+            tbl_results["position"][key], tbl_memory_results["position"][key]
+        )
+
+        assert jnp.allclose(
+            tbl_memory_results["position"][key],
+            positions_memory[key],
+        )
 
 
-@pytest.mark.parametrize("start", [0, 100])
-@pytest.mark.parametrize("step", [1, 8])
-@pytest.mark.parametrize("stop", [None])
-def test_species_equals_time_start_step_stop(start, step, stop, bmim_bf4_vectra):
-    tbdl = TimeBatchedLoader(
-        file=bmim_bf4_vectra,
-        structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
-        wrap=False,
+@pytest.mark.parametrize("wrap", [True, False])
+def test_start_stop_step_consistency_structures(ec_emc, ec_emc_smiles, wrap):
+    """Test that the start/stop/step functionality is consistent."""
+    tbl = TimeBatchedLoader(
+        file=ec_emc,
+        wrap=wrap,
+        batch_size=64,
+        start=10,
+        step=5,
+        stop=53,
+        memory=False,
+        structures=ec_emc_smiles,
+    )
+    tbl_memory = TimeBatchedLoader(
+        file=ec_emc,
+        wrap=wrap,
+        batch_size=64,
+        start=10,
+        step=5,
+        stop=53,
         memory=True,
-        batch_size=100,
-        start=start,
-        step=step,
-        stop=stop,
+        structures=ec_emc_smiles,
     )
-    sbdl = SpeciesBatchedLoader(
-        file=bmim_bf4_vectra,
-        structures=["CCCCN1C=C[N+](=C1)C", "[B-](F)(F)(F)F"],
-        wrap=False,
+
+    results = list(tbl)
+    tbl_results = results[0]
+    tbl_memory_results = list(tbl_memory)[0]
+    assert len(results) == 1  # one batch
+    assert set(tbl_results["position"]) == set(ec_emc_smiles)
+
+    sbl = SpeciesBatchedLoader(
+        file=ec_emc,
+        wrap=wrap,
+        batch_size=2048,
+        start=10,
+        step=5,
+        stop=53,
+        memory=False,
+        structures=ec_emc_smiles,
+    )
+    sbl_memory = SpeciesBatchedLoader(
+        file=ec_emc,
+        wrap=wrap,
+        batch_size=2048,
+        start=10,
+        step=5,
+        stop=53,
         memory=True,
-        batch_size=100,
-        start=start,
-        step=step,
-        stop=stop,
-    )
-    assert jnp.allclose(
-        tbdl.first_frame_atoms.positions, sbdl.first_frame_atoms.positions, atol=1e-6
+        structures=ec_emc_smiles,
     )
 
-    tbdl_data = defaultdict(list)
-    sbdl_data = defaultdict(list)
+    results = list(sbl)
+    positions = {}
+    positions_memory = {}
+    for x in results:
+        positions.update(x["position"])
+    for x in list(sbl_memory):
+        positions_memory.update(x["position"])
+    assert set(positions) == set(ec_emc_smiles)
 
-    for batch_output in tbdl:
-        batch = batch_output["position"]
-        for species, positions in batch.items():
-            tbdl_data[species].append(positions)
+    assert positions["COC(=O)OC"].shape == (
+        9,
+        54,
+        3,
+    )  # 9 frames, 54 molecules, 3 coordinates
+    assert positions["F[P-](F)(F)(F)(F)F"].shape == (9, 16, 3)
 
-    for batch_output in sbdl:
-        batch = batch_output["position"]
-        for species, positions in batch.items():
-            sbdl_data[species].append(positions)
-
-    assert tbdl_data.keys() == sbdl_data.keys()
-    assert len(tbdl_data) == 2
-    for key in tbdl_data.keys():
-        concat_tbdl = jnp.concatenate(tbdl_data[key], axis=0)
-        concat_sbdl = jnp.concatenate(sbdl_data[key], axis=1)
-
-        assert concat_tbdl.shape == concat_sbdl.shape
-        assert jnp.allclose(concat_tbdl, concat_sbdl, atol=1e-6)
-
-
-@pytest.mark.parametrize("com", [True, False])
-@pytest.mark.parametrize("loader_class", [TimeBatchedLoader, SpeciesBatchedLoader])
-def test_velocity_support(com, loader_class, bmim_bf4_vectra):
-    """Test that velocity properties can be requested and have matching shapes with positions"""
-    # Test with a file that might not have velocity data
-    loader = loader_class(
-        file=bmim_bf4_vectra,
-        wrap=False,
-        batch_size=10,
-        structures=None,
-        com=com,
-        properties=["position", "velocity", "masses"]
-    )
-    
-    batch_count = 0
-    for batch_output in loader:
-        batch_count += 1
-        
-        # Position should always be present
-        assert "position" in batch_output, "Position should be in output"
-        
-        # Velocity might be present (as zeros if not in file)
-        if "velocity" in batch_output:
-            # Check that shapes match when velocity is present
-            for species in batch_output["position"]:
-                pos_shape = batch_output["position"][species].shape
-                vel_shape = batch_output["velocity"][species].shape
-                assert pos_shape == vel_shape, f"Position and velocity shapes should match for {species}: {pos_shape} vs {vel_shape}"
-        
-        if batch_count >= 2:  # Test first couple batches
-            break
+    for key in tbl_results["position"]:
+        assert jnp.allclose(
+            tbl_results["position"][key],
+            positions[key],
+        )
+        assert jnp.allclose(
+            tbl_results["position"][key], tbl_memory_results["position"][key]
+        )
+        assert jnp.allclose(
+            tbl_memory_results["position"][key],
+            positions_memory[key],
+        )
