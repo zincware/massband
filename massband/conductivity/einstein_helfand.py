@@ -28,12 +28,12 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
 
     def _build_charge_mapping(self) -> dict[str, int]:
         """Build charge mapping from SMILES structures.
-        
+
         Returns
         -------
         dict[str, int]
             Dictionary mapping structure SMILES to their formal charges.
-            
+
         Raises
         ------
         ValueError
@@ -48,20 +48,22 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
                     charge_mapping[structure] = charge
             else:
                 raise ValueError(f"Invalid SMILES string: {structure}")
-        
+
         print("Charge mapping:", charge_mapping)
         return charge_mapping
 
-    def _construct_frames(self, positions: dict, charge_mapping: dict[str, int]) -> tuple[list, np.ndarray]:
+    def _construct_frames(
+        self, positions: dict, charge_mapping: dict[str, int]
+    ) -> tuple[list, np.ndarray]:
         """Construct ASE Atoms frames from positions data.
-        
+
         Parameters
         ----------
         positions : dict
             Dictionary mapping structure names to position arrays.
         charge_mapping : dict[str, int]
             Dictionary mapping structure names to formal charges.
-            
+
         Returns
         -------
         tuple[list, np.ndarray]
@@ -77,7 +79,7 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
         for key in charge_mapping:
             ionic_charge.extend(positions[key].shape[1] * [charge_mapping[key]])
         print("Ionic charges:", ionic_charge)
-        
+
         for frame_idx in range(length):
             numbers = []
             frame_positions = []
@@ -88,12 +90,12 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             frame_positions = np.array(frame_positions)
             atoms = ase.Atoms(positions=frame_positions, cell=(100000, 100000, 1000000))
             frames.append(atoms)
-            
+
         return frames, np.array(ionic_charge)
 
     def _process_results(self, bootstrap) -> None:
         """Process conductivity results and save data.
-        
+
         Parameters
         ----------
         bootstrap : MSCDBootstrap
@@ -206,7 +208,7 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
 
     def plot(self):
         """Generate plots for ionic conductivity analysis.
-        
+
         Notes
         -----
         Creates standard kinisi plots including displacement with std,

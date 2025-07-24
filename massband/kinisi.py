@@ -8,10 +8,10 @@ import numpy.typing as npt
 @dataclass
 class KinisiPlotData:
     """Dataclass to store data for plotting kinisi results.
-    
+
     This class contains all the necessary data for generating kinisi plots,
     including displacement data, samples, and statistical measures.
-    
+
     Attributes
     ----------
     structure : str

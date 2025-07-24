@@ -30,7 +30,7 @@ class PlottingConfig:
 
 def _get_text_box(data, config: PlottingConfig, results: Optional[dict] = None) -> str:
     """Generate the text for the annotation box on the histogram.
-    
+
     Parameters
     ----------
     data : KinisiPlotData
@@ -39,7 +39,7 @@ def _get_text_box(data, config: PlottingConfig, results: Optional[dict] = None) 
         Configuration object for plot styling.
     results : dict, optional
         Optional results dictionary for detailed statistics.
-        
+
     Returns
     -------
     str
@@ -73,18 +73,16 @@ def _get_text_box(data, config: PlottingConfig, results: Optional[dict] = None) 
     )
 
 
-
-
 def _plot_displacement_with_std(data, config: PlottingConfig) -> plt.Figure:
     """Create displacement plot with standard deviation error bars.
-    
+
     Parameters
     ----------
     data : KinisiPlotData
         The data object containing displacement and error data.
     config : PlottingConfig
         Configuration object for plot styling.
-        
+
     Returns
     -------
     plt.Figure
@@ -98,16 +96,18 @@ def _plot_displacement_with_std(data, config: PlottingConfig) -> plt.Figure:
     return fig
 
 
-def _plot_displacement_with_credible_intervals(data, config: PlottingConfig) -> plt.Figure:
+def _plot_displacement_with_credible_intervals(
+    data, config: PlottingConfig
+) -> plt.Figure:
     """Create displacement plot with credible intervals.
-    
+
     Parameters
     ----------
     data : KinisiPlotData
         The data object containing displacement and distribution data.
     config : PlottingConfig
         Configuration object for plot styling.
-        
+
     Returns
     -------
     plt.Figure
@@ -115,7 +115,7 @@ def _plot_displacement_with_credible_intervals(data, config: PlottingConfig) -> 
     """
     credible_intervals = [[16, 84], [2.5, 97.5], [0.15, 99.85]]
     alpha = [0.6, 0.4, 0.2]
-    
+
     fig, ax = plt.subplots()
     ax.plot(data.dt, data.displacement, "k-")
     for i, ci in enumerate(credible_intervals):
@@ -129,9 +129,11 @@ def _plot_displacement_with_credible_intervals(data, config: PlottingConfig) -> 
     return fig
 
 
-def _plot_histogram(data, config: PlottingConfig, results: Optional[dict] = None) -> plt.Figure:
+def _plot_histogram(
+    data, config: PlottingConfig, results: Optional[dict] = None
+) -> plt.Figure:
     """Create histogram plot of samples with statistics.
-    
+
     Parameters
     ----------
     data : KinisiPlotData
@@ -140,7 +142,7 @@ def _plot_histogram(data, config: PlottingConfig, results: Optional[dict] = None
         Configuration object for plot styling.
     results : dict, optional
         Optional results dictionary for detailed statistics.
-        
+
     Returns
     -------
     plt.Figure
@@ -183,7 +185,7 @@ def plot_kinisi_results(
     data, data_path: Path, config: PlottingConfig, results: Optional[dict] = None
 ):
     """Generate and save plots for kinisi-based analysis (diffusion/conductivity).
-    
+
     Parameters
     ----------
     data : KinisiPlotData
