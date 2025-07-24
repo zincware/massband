@@ -117,9 +117,9 @@ class IndependentBatchedLoader:
     start: int = 0
     stop: int | None = None
     step: int = 1
-    properties: list[t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]] = (
-        dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
-    )
+    properties: list[
+        t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]
+    ] = dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
 
     def __post_init__(self):
         self.handler = znh5md.IO(
@@ -130,12 +130,12 @@ class IndependentBatchedLoader:
                 "Batch size must be 1 for IndependentBatchedLoader. Setting to 1."
             )
             self.batch_size = 1  # can't be any larger for inhomogeneous shapes.
-        
+
         # Calculate total_frames before modifying handler for memory mode
         original_length = len(self.handler)
         effective_stop = self.stop if self.stop is not None else original_length
         self.total_frames = len(range(self.start, effective_stop, self.step))
-        
+
         if self.memory:
             log.info(f"Loading {self.total_frames} frames into memory...")
             self.handler = self.handler[self.start : self.stop : self.step]
@@ -202,9 +202,12 @@ class IndependentBatchedLoader:
 
                     pos_dict.setdefault(structure, []).append(positions)
                     masses_dict.setdefault(structure, []).append(masses)
-                    
+
                     # Handle velocities if available
-                    if hasattr(atoms, 'get_velocities') and atoms.get_velocities() is not None:
+                    if (
+                        hasattr(atoms, "get_velocities")
+                        and atoms.get_velocities() is not None
+                    ):
                         velocities = atoms.get_velocities()[list(mol_indices)]
                         vel_dict.setdefault(structure, []).append(velocities)
                     elif "velocity" in self.properties:
@@ -362,9 +365,9 @@ class TimeBatchedLoader:
     start: int = 0
     stop: int | None = None
     step: int = 1
-    properties: list[t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]] = (
-        dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
-    )
+    properties: list[
+        t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]
+    ] = dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
 
     def __post_init__(self):
         if not self.fixed_cell:
@@ -382,7 +385,7 @@ class TimeBatchedLoader:
 
         # Get the first frame before memory slicing to ensure consistency
         first_frame_raw = self.handler[self.start]
-        
+
         if self.memory:
             log.info(f"Loading {self.total_frames} frames into memory...")
             self.handler = self.handler[self.start : self.stop : self.step]
@@ -412,7 +415,7 @@ class TimeBatchedLoader:
     def __iter__(self):
         self.iter_offset = 0
         # Reset state for a new iteration to ensure reproducibility
-        if hasattr(self, 'first_frame_pos'):  # Only if loader was properly initialized
+        if hasattr(self, "first_frame_pos"):  # Only if loader was properly initialized
             self.last_wrapped_pos = self.first_frame_pos
             self.image_flag_state = jnp.zeros(
                 (len(self.first_frame_atoms), 3), dtype=jnp.int32
@@ -438,13 +441,16 @@ class TimeBatchedLoader:
             batch[0] = self.first_frame_atoms
 
         batch_positions = jnp.array([x.get_positions() for x in batch])
-        
+
         # Extract velocities if requested
         batch_velocities = None
         if "velocity" in self.properties:
             velocities_list = []
             for atoms in batch:
-                if hasattr(atoms, 'get_velocities') and atoms.get_velocities() is not None:
+                if (
+                    hasattr(atoms, "get_velocities")
+                    and atoms.get_velocities() is not None
+                ):
                     velocities_list.append(atoms.get_velocities())
                 else:
                     # Use zero velocities if not available
@@ -659,9 +665,9 @@ class SpeciesBatchedLoader:
     stop: int | None = None
     step: int = 1
     memory: bool = False
-    properties: list[t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]] = (
-        dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
-    )
+    properties: list[
+        t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]
+    ] = dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
 
     def __post_init__(self):
         if not self.fixed_cell:
@@ -677,8 +683,6 @@ class SpeciesBatchedLoader:
             log.info(f"Loading {self.file} into memory ...")
             self.handler = self.handler[self.start : self.stop : self.step]
             self.start, self.step = 0, 1
-
-
 
         if self.total_frames == 0:
             log.warning("The specified start, stop, and step result in zero frames.")
@@ -743,11 +747,16 @@ class SpeciesBatchedLoader:
         if "velocity" in self.properties:
             velocities_list = []
             for frame in sliced_frames:
-                if hasattr(frame, 'get_velocities') and frame.get_velocities() is not None:
+                if (
+                    hasattr(frame, "get_velocities")
+                    and frame.get_velocities() is not None
+                ):
                     velocities_list.append(frame.get_velocities()[atom_indices_flat])
                 else:
                     # Use zero velocities if not available
-                    velocities_list.append(jnp.zeros_like(frame.get_positions()[atom_indices_flat]))
+                    velocities_list.append(
+                        jnp.zeros_like(frame.get_positions()[atom_indices_flat])
+                    )
             raw_velocities = jnp.array(velocities_list)
 
         # Unwrap the full trajectory slice for this species using the image flag method
@@ -768,7 +777,7 @@ class SpeciesBatchedLoader:
             total_mol_mass = jnp.sum(masses, axis=1)
             numerator = jnp.sum(mol_positions * masses[None, :, :, None], axis=2)
             pos = numerator / total_mol_mass[None, :, None]
-            
+
             # Compute COM velocity if velocities are available
             if raw_velocities is not None:
                 mol_velocities = raw_velocities.reshape(

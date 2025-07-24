@@ -4,6 +4,7 @@ import pytest
 
 EC_EMC = (Path(__file__).parent.parent / "data" / "ec_emc.h5").resolve()
 
+
 @pytest.fixture
 def ec_emc():
     """Fixture to provide the EC EMC file."""

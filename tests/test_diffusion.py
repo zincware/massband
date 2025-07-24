@@ -4,7 +4,6 @@ import pytest
 
 import massband
 
-
 ec_emc_results = {
     "F[P-](F)(F)(F)(F)F": {
         "diffusion_coefficient": 5.98157494352885e-07,
