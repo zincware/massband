@@ -253,7 +253,7 @@ class RadialDistributionFunction(zntrack.Node):
         zntrack.params("TimeBatchedLoader")
     )
     results: dict[str, list[float]] = zntrack.outs()
-
+    partial_number_densities: dict[str, float] = zntrack.outs()
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
     def run(self):  # noqa: C901
@@ -299,6 +299,12 @@ class RadialDistributionFunction(zntrack.Node):
         # structure_names = list(first_batch_data.keys())
         structure_names = list(loader.indices.keys())
 
+        first_frame_atoms = loader.first_frame_atoms
+        volume = first_frame_atoms.get_volume()  # In Å³
+
+        # Calculate and store number density from first frame atoms
+        self.partial_number_densities = {}
+
         # Compute RDF parameters from cell dimensions
         max_distance = 0.5 * float(jnp.min(jnp.linalg.norm(cells, axis=-1)))
 
@@ -336,6 +342,11 @@ class RadialDistributionFunction(zntrack.Node):
             batch_cells = batch_output["cell"]
             batch_frames = list(batch_data.values())[0].shape[0]
             total_frames += batch_frames
+            if len(self.partial_number_densities) == 0:
+                # Calculate number density for the first batch
+                for struct_name, positions in batch_data.items():
+                    n_atoms = positions.shape[1]
+                    self.partial_number_densities[struct_name] = n_atoms / volume
 
             # Update progress bar description with current batch info
             pbar.set_description(f"Processing batch {batch_number}/{len(loader)}")
@@ -374,7 +385,7 @@ class RadialDistributionFunction(zntrack.Node):
         # TODO: something is wrong with the bin_edges!
         plot_rdf(
             self.results,
-            self.figures / "rdf.png",
+            self.figures,
             bin_width=self.bin_width,
             bayesian=self.bayesian,
             fit_method=self.fit_method,
