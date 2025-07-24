@@ -130,12 +130,10 @@ class IndependentBatchedLoader:
                 "Batch size must be 1 for IndependentBatchedLoader. Setting to 1."
             )
             self.batch_size = 1  # can't be any larger for inhomogeneous shapes.
-
         # Calculate total_frames before modifying handler for memory mode
         original_length = len(self.handler)
         effective_stop = self.stop if self.stop is not None else original_length
         self.total_frames = len(range(self.start, effective_stop, self.step))
-
         if self.memory:
             log.info(f"Loading {self.total_frames} frames into memory...")
             self.handler = self.handler[self.start : self.stop : self.step]
@@ -385,7 +383,6 @@ class TimeBatchedLoader:
 
         # Get the first frame before memory slicing to ensure consistency
         first_frame_raw = self.handler[self.start]
-
         if self.memory:
             log.info(f"Loading {self.total_frames} frames into memory...")
             self.handler = self.handler[self.start : self.stop : self.step]
