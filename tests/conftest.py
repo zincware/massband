@@ -2,10 +2,22 @@ from pathlib import Path
 
 import pytest
 
-BMIM_BF4_VECTRA = (Path(__file__).parent.parent / "data" / "bmim_bf4_vectra.h5").resolve()
+EC_EMC = (Path(__file__).parent.parent / "data" / "ec_emc.h5").resolve()
+
+@pytest.fixture
+def ec_emc():
+    """Fixture to provide the EC EMC file."""
+    return EC_EMC
 
 
 @pytest.fixture
-def bmim_bf4_vectra():
-    """Fixture to provide the BMIM BF4 Vectra file."""
-    return BMIM_BF4_VECTRA
+def ec_emc_smiles() -> list[str]:
+    smiles = {
+        "PF6": "F[P-](F)(F)(F)(F)F",
+        "Li": "[Li+]",
+        "EC": "C1COC(=O)O1",
+        "EMC": "CCOC(=O)OC",
+        "VC": "C1=COC(=O)O1",
+        "DMC": "COC(=O)OC",
+    }
+    return list(smiles.values())
