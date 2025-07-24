@@ -36,11 +36,13 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     start: int = zntrack.params(0)  # in ps - start time for diffusion analysis
     time_step: float = zntrack.params(0.5)  # in fs - time step of the simulation
     sampling_rate: int = zntrack.params(1000)  # in fs - sampling
-
+    
+    results: dict = zntrack.metrics()
     data_path: Path = zntrack.outs_path(zntrack.nwd / "conductivity_data")
 
     def run(self):
         self.data_path.mkdir(exist_ok=True, parents=True)
+        self.results = {}
 
         charge_mapping = {}
         for structure in self.structures:
@@ -134,6 +136,21 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             print(
                 f"95% Confidence Interval: [{sigma_95_ci[0]:.6f}, {sigma_95_ci[1]:.6f}] mS/cm"
             )
+
+            # Calculate additional statistics for results
+            ci68 = np.percentile(sigma_samples, [16, 84])
+            uncertainty_low = sigma_mean - ci68[0]
+            uncertainty_high = ci68[1] - sigma_mean
+
+            # Store results similar to diffusion implementation
+            self.results["system"] = {
+                "ionic_conductivity": float(sigma_mean),
+                "std": float(sigma_std),
+                "credible_interval_68": ci68.tolist(),
+                "credible_interval_95": sigma_95_ci.tolist(),
+                "asymmetric_uncertainty": [uncertainty_low, uncertainty_high],
+                "samples": sigma_samples.tolist() if isinstance(sigma_samples, np.ndarray) else sigma_samples,
+            }
 
             # Create distribution for plotting (MSCD vs time with uncertainty)
             if hasattr(bootstrap, "gradient") and hasattr(bootstrap, "intercept"):
