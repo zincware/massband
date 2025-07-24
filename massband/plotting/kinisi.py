@@ -29,7 +29,22 @@ class PlottingConfig:
 
 
 def _get_text_box(data, config: PlottingConfig, results: Optional[dict] = None) -> str:
-    """Generate the text for the annotation box on the histogram."""
+    """Generate the text for the annotation box on the histogram.
+    
+    Parameters
+    ----------
+    data : KinisiPlotData
+        The data object containing samples and mean values.
+    config : PlottingConfig
+        Configuration object for plot styling.
+    results : dict, optional
+        Optional results dictionary for detailed statistics.
+        
+    Returns
+    -------
+    str
+        Formatted text string for the annotation box.
+    """
     if results and data.structure in results:
         res = results[data.structure]
         # Check for diffusion results keys
@@ -58,28 +73,49 @@ def _get_text_box(data, config: PlottingConfig, results: Optional[dict] = None) 
     )
 
 
-def plot_kinisi_results(
-    data, data_path: Path, config: PlottingConfig, results: Optional[dict] = None
-):
-    """Generate and save plots for kinisi-based analysis (diffusion/conductivity)."""
-    credible_intervals = [[16, 84], [2.5, 97.5], [0.15, 99.85]]
-    alpha = [0.6, 0.4, 0.2]
 
-    # Displacement with std plot
+
+def _plot_displacement_with_std(data, config: PlottingConfig) -> plt.Figure:
+    """Create displacement plot with standard deviation error bars.
+    
+    Parameters
+    ----------
+    data : KinisiPlotData
+        The data object containing displacement and error data.
+    config : PlottingConfig
+        Configuration object for plot styling.
+        
+    Returns
+    -------
+    plt.Figure
+        The created matplotlib figure.
+    """
     fig, ax = plt.subplots()
     ax.errorbar(data.dt, data.displacement, data.displacement_std)
     ax.set_ylabel(f"{config.displacement_label}/{config.displacement_unit}")
     ax.set_xlabel(r"$\Delta t$/ps")
     ax.set_title(config.msd_title)
-    try:
-        fig.savefig(data_path / config.msd_filename, dpi=300)
-    except FileNotFoundError:
-        log.warning(
-            "Could not save plot %s. Does the directory exist?", config.msd_filename
-        )
-    plt.close(fig)
+    return fig
 
-    # Displacement with credible intervals plot
+
+def _plot_displacement_with_credible_intervals(data, config: PlottingConfig) -> plt.Figure:
+    """Create displacement plot with credible intervals.
+    
+    Parameters
+    ----------
+    data : KinisiPlotData
+        The data object containing displacement and distribution data.
+    config : PlottingConfig
+        Configuration object for plot styling.
+        
+    Returns
+    -------
+    plt.Figure
+        The created matplotlib figure.
+    """
+    credible_intervals = [[16, 84], [2.5, 97.5], [0.15, 99.85]]
+    alpha = [0.6, 0.4, 0.2]
+    
     fig, ax = plt.subplots()
     ax.plot(data.dt, data.displacement, "k-")
     for i, ci in enumerate(credible_intervals):
@@ -90,15 +126,26 @@ def plot_kinisi_results(
     ax.set_xlabel(r"$\Delta t$/ps")
     ax.set_title(config.ci_title)
     ax.legend()
-    try:
-        fig.savefig(data_path / config.ci_filename, dpi=300)
-    except FileNotFoundError:
-        log.warning(
-            "Could not save plot %s. Does the directory exist?", config.ci_filename
-        )
-    plt.close(fig)
+    return fig
 
-    # Histogram plot
+
+def _plot_histogram(data, config: PlottingConfig, results: Optional[dict] = None) -> plt.Figure:
+    """Create histogram plot of samples with statistics.
+    
+    Parameters
+    ----------
+    data : KinisiPlotData
+        The data object containing samples data.
+    config : PlottingConfig
+        Configuration object for plot styling.
+    results : dict, optional
+        Optional results dictionary for detailed statistics.
+        
+    Returns
+    -------
+    plt.Figure
+        The created matplotlib figure.
+    """
     fig, ax = plt.subplots()
     ax.hist(
         data.samples,
@@ -129,11 +176,36 @@ def plot_kinisi_results(
         bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
         fontsize=8,
     )
+    return fig
 
-    try:
-        fig.savefig(data_path / config.hist_filename, dpi=300)
-    except FileNotFoundError:
-        log.warning(
-            "Could not save plot %s. Does the directory exist?", config.hist_filename
-        )
+
+def plot_kinisi_results(
+    data, data_path: Path, config: PlottingConfig, results: Optional[dict] = None
+):
+    """Generate and save plots for kinisi-based analysis (diffusion/conductivity).
+    
+    Parameters
+    ----------
+    data : KinisiPlotData
+        The data object containing all plotting data.
+    data_path : Path
+        Directory path where plots should be saved.
+    config : PlottingConfig
+        Configuration object for plot styling and filenames.
+    results : dict, optional
+        Optional results dictionary for detailed statistics.
+    """
+    # Displacement with std plot
+    fig = _plot_displacement_with_std(data, config)
+    fig.savefig(data_path / config.msd_filename, dpi=300)
+    plt.close(fig)
+
+    # Displacement with credible intervals plot
+    fig = _plot_displacement_with_credible_intervals(data, config)
+    fig.savefig(data_path / config.ci_filename, dpi=300)
+    plt.close(fig)
+
+    # Histogram plot
+    fig = _plot_histogram(data, config, results)
+    fig.savefig(data_path / config.hist_filename, dpi=300)
     plt.close(fig)

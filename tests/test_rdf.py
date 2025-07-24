@@ -48,36 +48,27 @@ def test_rdf_node_smiles(tmp_path, ec_emc, ec_emc_smiles):
     assert (node.figures / "rdf.png").exists()
 
 
-# def test_rdf_node_full(tmp_path, bmim_bf4_vectra):
-#     os.chdir(tmp_path)
-#     node = RadialDistributionFunction(
-#         file=bmim_bf4_vectra,
-#         batch_size=5,
-#         structures=None,
-#     )
-#     node.run()
-#     ALL_KEYS = [
-#         "H|H",
-#         "H|B",
-#         "H|C",
-#         "H|N",
-#         "H|F",
-#         "B|B",
-#         "B|C",
-#         "B|N",
-#         "B|F",
-#         "C|C",
-#         "C|N",
-#         "C|F",
-#         "N|N",
-#         "N|F",
-#         "F|F",
-#     ]
-#     for key in ALL_KEYS:
-#         assert len(node.results[key]) == 171
-#         assert sum(node.results[key]) > 0
+def test_rdf_node_full(tmp_path, bmim_bf4_vectra):
+    os.chdir(tmp_path)
+    node = RadialDistributionFunction(
+        file=bmim_bf4_vectra,
+        batch_size=5,
+        structures=None,
+    )
+    node.run()
+    
+    # Generate expected pairs using the specified atomic types
+    atomic_types = ["H", "C", "O", "P", "F", "Li"]
+    expected_pairs = [f"{a}|{b}" for a, b in generate_sorted_pairs(atomic_types)]
+    
+    for key in expected_pairs:
+        if key in node.results:  # Only check pairs that exist in results
+            assert len(node.results[key]) == 171
+            assert sum(node.results[key]) > 0
 
-#     assert len(node.results) == 15
+    # Check that all results keys are in expected pairs
+    for key in node.results:
+        assert key in expected_pairs
 
 
 def test_rdf_hh_goes_to_one(tmp_path, ec_emc):

@@ -3,11 +3,94 @@ import numpy as np
 from jax import jit
 
 
+def _validate_unwrap_inputs(positions: jnp.ndarray, cells: jnp.ndarray, inv_cells: jnp.ndarray) -> None:
+    """Validate inputs for unwrap_positions function.
+    
+    Parameters
+    ----------
+    positions : jnp.ndarray
+        Array of atomic positions.
+    cells : jnp.ndarray
+        Array of unit cell vectors.
+    inv_cells : jnp.ndarray
+        Array of inverse unit cell vectors.
+        
+    Raises
+    ------
+    TypeError
+        If input arrays are not jax arrays.
+    ValueError
+        If array shapes are incompatible or arrays are empty.
+    """
+    # Type validation
+    if not isinstance(positions, jnp.ndarray):
+        raise TypeError("positions must be a jax numpy array")
+    if not isinstance(cells, jnp.ndarray):
+        raise TypeError("cells must be a jax numpy array")
+    if not isinstance(inv_cells, jnp.ndarray):
+        raise TypeError("inv_cells must be a jax numpy array")
+    
+    # Empty array validation
+    if positions.size == 0:
+        raise ValueError("positions array cannot be empty")
+    if cells.size == 0:
+        raise ValueError("cells array cannot be empty")
+    if inv_cells.size == 0:
+        raise ValueError("inv_cells array cannot be empty")
+    
+    # Shape validation
+    if positions.ndim != 3:
+        raise ValueError(f"positions must be 3D array (n_frames, n_atoms, 3), got shape {positions.shape}")
+    if cells.ndim != 3 or cells.shape[-2:] != (3, 3):
+        raise ValueError(f"cells must have shape (n_frames, 3, 3), got shape {cells.shape}")
+    if inv_cells.ndim != 3 or inv_cells.shape[-2:] != (3, 3):
+        raise ValueError(f"inv_cells must have shape (n_frames, 3, 3), got shape {inv_cells.shape}")
+    
+    # Frame consistency validation
+    n_frames = positions.shape[0]
+    if cells.shape[0] != n_frames:
+        raise ValueError(f"cells must have {n_frames} frames, got {cells.shape[0]}")
+    if inv_cells.shape[0] != n_frames:
+        raise ValueError(f"inv_cells must have {n_frames} frames, got {inv_cells.shape[0]}")
+    
+    # Spatial dimensions validation
+    if positions.shape[-1] != 3:
+        raise ValueError(f"positions must have 3 spatial dimensions, got {positions.shape[-1]}")
+
+
 def unwrap_positions(
     positions: jnp.ndarray, cells: jnp.ndarray, inv_cells: jnp.ndarray
 ) -> jnp.ndarray:
-    """Unwrap atomic positions to account for periodic boundary conditions."""
-    # TODO: this is not general enough for all cell types
+    """Unwrap atomic positions to account for periodic boundary conditions.
+    
+    Parameters
+    ----------
+    positions : jnp.ndarray
+        Array of atomic positions with shape (n_frames, n_atoms, 3).
+    cells : jnp.ndarray
+        Array of unit cell vectors with shape (n_frames, 3, 3).
+    inv_cells : jnp.ndarray
+        Array of inverse unit cell vectors with shape (n_frames, 3, 3).
+    
+    Returns
+    -------
+    jnp.ndarray
+        Unwrapped positions with the same shape as input positions.
+        
+    Raises
+    ------
+    ValueError
+        If array shapes are incompatible or arrays are empty.
+    TypeError
+        If input arrays are not jax arrays.
+    
+    Notes
+    -----
+    This implementation assumes orthogonal cells and is not general 
+    enough for all cell types (e.g., triclinic cells).
+    """
+    _validate_unwrap_inputs(positions, cells, inv_cells)
+    
     # Calculate displacements
     displacements = jnp.diff(positions, axis=0)
 
