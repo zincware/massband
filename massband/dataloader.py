@@ -129,14 +129,16 @@ class IndependentBatchedLoader:
                 "Batch size must be 1 for IndependentBatchedLoader. Setting to 1."
             )
             self.batch_size = 1  # can't be any larger for inhomogeneous shapes.
+        
+        # Calculate total_frames before modifying handler for memory mode
+        original_length = len(self.handler)
+        effective_stop = self.stop if self.stop is not None else original_length
+        self.total_frames = len(range(self.start, effective_stop, self.step))
+        
         if self.memory:
-            log.info(f"Loading {self.file} into memory ...")
+            log.info(f"Loading {self.total_frames} frames into memory...")
             self.handler = self.handler[self.start : self.stop : self.step]
             self.start, self.step = 0, 1
-
-        self.total_frames = len(
-            range(self.start, self.stop or len(self.handler), self.step)
-        )
         if self.total_frames == 0:
             log.warning("The specified start, stop, and step result in zero frames.")
             return
@@ -356,12 +358,13 @@ class TimeBatchedLoader:
             log.warning("The specified start, stop, and step result in zero frames.")
             return
 
+        # Get the first frame before memory slicing to ensure consistency
+        first_frame_raw = self.handler[self.start]
+        
         if self.memory:
             log.info(f"Loading {self.total_frames} frames into memory...")
             self.handler = self.handler[self.start : self.stop : self.step]
             self.start, self.step = 0, 1
-
-        first_frame_raw = self.handler[0]
         self.first_frame_atoms = rdkit2ase.unwrap_structures(first_frame_raw)
         self.first_frame_pos = jnp.array(self.first_frame_atoms.get_positions())
         self.first_frame_cell = jnp.array(self.first_frame_atoms.get_cell()[:])
@@ -409,6 +412,7 @@ class TimeBatchedLoader:
 
         batch = list(batch)
         if self.iter_offset == 0:
+            # Always use the consistent first frame atoms for the first frame
             batch[0] = self.first_frame_atoms
 
         batch_positions = jnp.array([x.get_positions() for x in batch])
