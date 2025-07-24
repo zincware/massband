@@ -34,6 +34,8 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     structures: list[str] = zntrack.params(default_factory=list)
     start_dt: float = zntrack.params(10)  # in ps - start time for conductivity analysis
     start: int = zntrack.params(0)  # in ps - start time for diffusion analysis
+    timestep: float = zntrack.params(0.5)  # in fs - time step of the simulation
+    sampling_rate: int = zntrack.params(1000)  # in fs - sampling
 
     data_path: Path = zntrack.outs_path(zntrack.nwd / "conductivity_data")
 
@@ -99,8 +101,8 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             specie="X",
             # time_step=effective_time_step,
             # step_skip=self.sampling_rate,
-            time_step=0.5 / 1000,
-            step_skip=2000,
+            time_step=self.timestep / 1000,
+            step_skip=self.sampling_rate,
         )
         ionic_charge = np.array(ionic_charge)
 
