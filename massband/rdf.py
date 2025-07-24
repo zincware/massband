@@ -253,6 +253,7 @@ class RadialDistributionFunction(zntrack.Node):
         zntrack.params("TimeBatchedLoader")
     )
     results: dict[str, list[float]] = zntrack.outs()
+    number_density: float = zntrack.outs()
 
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
 
@@ -298,6 +299,12 @@ class RadialDistributionFunction(zntrack.Node):
         cells = loader.first_frame_atoms.get_cell()[:]
         # structure_names = list(first_batch_data.keys())
         structure_names = list(loader.indices.keys())
+        
+        # Calculate and store number density from first frame atoms
+        first_frame_atoms = loader.first_frame_atoms
+        volume = first_frame_atoms.get_volume()
+        num_atoms = len(first_frame_atoms)
+        self.number_density = num_atoms / volume
 
         # Compute RDF parameters from cell dimensions
         max_distance = 0.5 * float(jnp.min(jnp.linalg.norm(cells, axis=-1)))

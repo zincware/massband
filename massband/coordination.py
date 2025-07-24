@@ -17,7 +17,8 @@ class CoordinationNumber(zntrack.Node):
 
     This node depends on RadialDistributionFunction results and calculates
     the coordination number for the first shell of each RDF pair by integrating
-    the RDF up to the first minimum.
+    the RDF up to the first minimum. The number density is automatically
+    calculated from the ASE atoms object's cell volume and atom count.
     """
 
     rdf: RadialDistributionFunction = zntrack.deps()
@@ -255,10 +256,8 @@ class CoordinationNumber(zntrack.Node):
             first_min_distance = self._find_first_minimum(r, g_r)
             self.first_shell_distances[pair_key] = first_min_distance
 
-            # Estimate number density (this is a simplification)
-            # In practice, this should be calculated from the simulation system
-            # For now, we'll use a reasonable estimate based on typical liquid densities
-            estimated_number_density = 0.033  # atoms/Å³ (approximate for liquid systems)
+            # Get number density from RDF calculation (computed from ASE atoms object)
+            estimated_number_density = self.rdf.number_density
 
             # Calculate coordination number
             coordination_number = self._calculate_coordination_number(
