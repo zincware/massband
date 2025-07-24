@@ -14,8 +14,7 @@ from jax import jit
 from tqdm import tqdm
 
 from massband.com import center_of_mass_trajectories
-from massband.diffusion.utils import compute_msd_direct, compute_msd_fft
-from massband.utils import unwrap_positions
+from massband.utils import compute_msd_direct, compute_msd_fft, unwrap_positions
 
 # Enable 64-bit precision in JAX for FFT accuracy
 jax.config.update("jax_enable_x64", True)
@@ -35,7 +34,6 @@ class EinsteinSelfDiffusion(zntrack.Node):
     method: Literal["direct", "fft"] = zntrack.params("fft")
     structures: list[str] | None = zntrack.params(None)
     use_com: bool = zntrack.params(False)
-    # TODO: allow not smiles but just the sum formula, e.g. "C6H12O6" for glucose
 
     def get_cells(self) -> Tuple[jnp.ndarray, jnp.ndarray]:
         io = znh5md.IO(
@@ -56,15 +54,7 @@ class EinsteinSelfDiffusion(zntrack.Node):
     def compute_diffusion_coefficients(
         self, msds: Dict[str | int, List[jnp.ndarray]], timestep_fs: float
     ) -> Dict:
-        """Calculate diffusion coefficients from MSD data.
-
-        Args:
-            msds: Dictionary mapping atomic numbers to lists of MSD arrays.
-            timestep_fs: MD timestep in femtoseconds.
-
-        Returns:
-            Dictionary containing full data for plotting and analysis.
-        """
+        """Calculate diffusion coefficients from MSD data."""
         results = {}
         timestep_ps = timestep_fs / 1000  # fs -> ps
 
@@ -72,22 +62,17 @@ class EinsteinSelfDiffusion(zntrack.Node):
             msd_avg = jnp.mean(jnp.stack(msd_array), axis=0)
             time_ps = jnp.arange(msd_avg.shape[0]) * timestep_ps
 
-            # Fit to linear region
             start_idx = int(len(time_ps) * self.fit_window[0])
             end_idx = int(len(time_ps) * self.fit_window[1])
 
             fit_time = time_ps[start_idx:end_idx]
             fit_msd = msd_avg[start_idx:end_idx]
 
-            # Linear least squares fit
             A = jnp.vstack([fit_time, jnp.ones_like(fit_time)]).T
             slope, intercept = jnp.linalg.lstsq(A, fit_msd, rcond=None)[0]
             D_fit = slope / 6
             fit_line = slope * time_ps + intercept
-            if isinstance(Z, int):
-                symbol = chemical_symbols[Z]
-            else:
-                symbol = Z
+            symbol = chemical_symbols[Z] if isinstance(Z, int) else Z
 
             results[Z] = {
                 "Z": Z,
@@ -108,26 +93,15 @@ class EinsteinSelfDiffusion(zntrack.Node):
         return results
 
     def plot_results(self, results: Dict, filename: str = "msd_species.png"):
-        """Plot MSD curves and diffusion coefficient fits.
-
-        Args:
-            results: Dictionary containing precomputed MSD and fit data
-            filename: Output filename for the plot
-        """
+        """Plot MSD curves and diffusion coefficient fits."""
         n_species = len(results)
         n_cols = min(3, n_species)
         n_rows = (n_species + n_cols - 1) // n_cols
         fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
-
-        if n_rows == 1 and n_cols == 1:
-            axes = [axes]
-        else:
-            axes = axes.flatten()
+        axes = [axes] if n_rows == 1 and n_cols == 1 else axes.flatten()
 
         for ax, (Z, data) in zip(axes, results.items()):
-            time_ps = data["time_ps"]
-            msd = data["msd"]
-            fit_line = data["fit_line"]
+            time_ps, msd, fit_line = data["time_ps"], data["msd"], data["fit_line"]
             start_idx, end_idx = data["fit_window"]
 
             ax.plot(time_ps, msd, label="MSD")
@@ -152,7 +126,6 @@ class EinsteinSelfDiffusion(zntrack.Node):
             ax.legend()
             ax.grid(True)
 
-        # Hide unused subplots
         for ax in axes[n_species:]:
             ax.set_visible(False)
 
@@ -173,12 +146,11 @@ class EinsteinSelfDiffusion(zntrack.Node):
             entity_positions, _ = center_of_mass_trajectories(
                 file=self.file, structures=self.structures, wrap=False
             )
-            # entity_positions is a dict: {identifier: jnp.ndarray (n_frames, n_entities, 3)}
-            # We need to flatten this into a list of (identifier, trajectory) pairs
-            entities_to_process = []
-            for identifier, positions_array in entity_positions.items():
-                for i in range(positions_array.shape[1]):
-                    entities_to_process.append((identifier, positions_array[:, i, :]))
+            entities_to_process = [
+                (identifier, positions_array[:, i, :])
+                for identifier, positions_array in entity_positions.items()
+                for i in range(positions_array.shape[1])
+            ]
             log.info(f"Starting MSD calculation for {len(entities_to_process)} entities")
 
         else:
@@ -186,31 +158,25 @@ class EinsteinSelfDiffusion(zntrack.Node):
             io = znh5md.IO(self.file, variable_shape=False, include=["position"])
             frames = io[:]
             atomic_numbers = jnp.array(frames[0].get_atomic_numbers())
-            positions = jnp.stack([atoms.positions for atoms in frames])
-            positions = unwrap_positions(positions, cells, inv_cells)
-
-            entities_to_process = []
-            for i in range(positions.shape[1]):
-                entities_to_process.append((atomic_numbers[i].item(), positions[:, i, :]))
+            positions = unwrap_positions(
+                jnp.stack([atoms.positions for atoms in frames]), cells, inv_cells
+            )
+            entities_to_process = [
+                (atomic_numbers[i].item(), positions[:, i, :])
+                for i in range(positions.shape[1])
+            ]
             log.info(f"Starting MSD calculation for {len(entities_to_process)} atoms")
 
-        if self.method == "direct":
+        msd_fn = {
+            "direct": jit(compute_msd_direct),
+            "fft": compute_msd_fft,
+        }.get(self.method)
 
-            @jit
-            def msd_fn(x):
-                return compute_msd_direct(x)
-
-            log.info("Using direct MSD computation method")
-        elif self.method == "fft":
-
-            def msd_fn(x):
-                return compute_msd_fft(x)
-
-            log.info("Using FFT-based MSD computation method")
-        else:
+        if msd_fn is None:
             raise ValueError(f"Unknown method: {self.method}. Use 'direct' or 'fft'.")
 
-        # Process entities in batches
+        log.info(f"Using {self.method} MSD computation method")
+
         for identifier, pos_i in tqdm(entities_to_process, desc="Processing entities"):
             msd_i = msd_fn(pos_i)
             msds[identifier].append(msd_i)

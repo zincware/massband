@@ -1,4 +1,30 @@
 import jax.numpy as jnp
+from jax import jit
+
+
+def unwrap_positions(
+    positions: jnp.ndarray, cells: jnp.ndarray, inv_cells: jnp.ndarray
+) -> jnp.ndarray:
+    """Unwrap atomic positions to account for periodic boundary conditions."""
+    # TODO: this is not general enough for all cell types
+    # Calculate displacements
+    displacements = jnp.diff(positions, axis=0)
+
+    # Rewrap displacements into the simulation box
+    scaled_displacements = jnp.einsum("...ij,...j->...i", inv_cells[:-1], displacements)
+    rewrapped_displacements = scaled_displacements - jnp.round(scaled_displacements)
+    unscaled_displacements = jnp.einsum(
+        "...ij,...j->...i", cells[:-1], rewrapped_displacements
+    )
+
+    # Cumulatively sum the unwrapped displacements to get the unwrapped trajectory
+    unwrapped_positions = jnp.concatenate(
+        [positions[0][jnp.newaxis, ...], positions[0] + jnp.cumsum(unscaled_displacements, axis=0)],
+        axis=0,
+    )
+    return unwrapped_positions
+
+import jax.numpy as jnp
 import numpy as np
 from jax import jit
 

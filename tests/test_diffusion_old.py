@@ -4,7 +4,7 @@ import pint
 import pytest
 import tidynamics
 
-from massband.diffusion.utils import compute_msd_direct, compute_msd_fft
+from massband.utils import compute_msd_direct, compute_msd_fft
 
 ureg = pint.UnitRegistry()
 
