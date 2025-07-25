@@ -6,8 +6,7 @@ from .coordination import CoordinationNumber
 from .diffusion import KinisiSelfDiffusion
 from .pmf import PotentialOfMeanForce
 from .radius_of_gyration import RadiusOfGyration
-from .rdf import RadialDistributionFunction
-from .bond_analysis import BondAnalysis
+from .rdf import RadialDistributionFunction, SubstructureRadialDistributionFunction
 
 __all__ = [
     "RadialDistributionFunction",
@@ -17,5 +16,5 @@ __all__ = [
     "RadiusOfGyration",
     "NernstEinsteinIonicConductivity",
     "KinisiEinsteinHelfandIonicConductivity",
-    "BondAnalysis",
+    "SubstructureRadialDistributionFunction",
 ]

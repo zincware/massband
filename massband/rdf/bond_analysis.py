@@ -171,171 +171,110 @@ def visualize_selected_molecules(mol: rdchem.Mol, a: list[int], b: list[int]):
     )
     return img
 
-class BondAnalysis(zntrack.Node):
-    """Analyze bonds in structures.
-    
-    Parameters
-    ----------
-    file : str | Path
-        Path to the input file containing structure data.
-    pairs: list[tuple[str, str]]
-        The pairs of atoms to analyze. For a given structures like
-        `["C1COC(=O)O1", "F[P-](F)(F)(F)(F)F"]`, the pairs could be
-        `[("C1[C:1]OC(=O)O1", "[F:1][P-]([F:1])([F:1])([F:1][F:1])")]`.
-    """
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+from typing import Literal
+import jax.numpy as jnp
+from massband.rdf.utils import compute_rdf
+
+class SubstructureRadialDistributionFunction(zntrack.Node):
+    """Calculate radial distribution functions for selected substructure pairs."""
     file: str | Path = zntrack.deps_path()
     structures: list[str] = zntrack.params(default_factory=list)
     pairs: list[tuple[str, str]] = zntrack.params(default_factory=list)
     hydrogens: list[tuple[Literal["include", "exclude", "isolated"], Literal["include", "exclude", "isolated"]]] = zntrack.params(default_factory=list)
-    bond_distance_threshold: float = zntrack.params(default=3.0)
+    max_distance: float = zntrack.params(default=10.0)
+    bin_width: float = zntrack.params(default=0.05)
     batch_size: int = zntrack.params(default=64)
     start: int = zntrack.params(default=0)
-    stop: int|None = zntrack.params(default=None)
+    stop: int | None = zntrack.params(default=None)
     step: int = zntrack.params(default=1)
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
-    bond_distances: dict = zntrack.outs()
+    rdf_results: dict = zntrack.outs()
 
-    def plot_bond_distances(self, all_bond_distances, time_steps):
+    def plot_rdf_for_pairs(self, rdf_data):
         """
-        Create plots showing bond distance evolution and distribution for each pair.
-        
-        This function generates two plots per pair:
-        1. The mean bond distance over time, with the standard deviation as a shaded area.
-        2. A histogram and Kernel Density Estimate (KDE) of all bond distances found.
-        
+        Create RDF plots for each substructure pair.
+
         Args:
-            all_bond_distances: Dictionary with bond distances for each pair over time.
-            time_steps: List of time step indices.
+            rdf_data: Dict with RDF data for each pair.
         """
-        # Use a nicer plot style
-        sns.set_theme(style="whitegrid")
-
-        for pair_idx, (pair_key, distances_over_time) in enumerate(all_bond_distances.items()):
+        # Create individual RDF plots for each pair
+        for pair_idx, g_r in enumerate(rdf_data.values()):
+            if len(g_r) == 0:
+                print(f"Skipping RDF plot for pair {pair_idx}: No data.")
+                continue
+                
+            # Create r-values from bin centers
+            r_values = np.arange(len(g_r)) * self.bin_width + self.bin_width / 2.0
             
-            # --- Plot 1: Mean and Standard Deviation over Time ---
+            plt.figure(figsize=(10, 6))
+            plt.plot(r_values, g_r, linewidth=2, color='C0')
+            plt.xlabel('r (Å)')
+            plt.ylabel('g(r)')
+            plt.title(f'Radial Distribution Function\n{self.pairs[pair_idx][0]} - {self.pairs[pair_idx][1]}')
+            plt.grid(True, alpha=0.3)
+            plt.xlim(0, min(self.max_distance, r_values[-1]))
             
-            mean_distances = [np.mean(d) if d else np.nan for d in distances_over_time]
-            std_distances = [np.std(d) if d else np.nan for d in distances_over_time]
-            
-            # Convert to numpy arrays for easier calculations
-            mean_distances = np.array(mean_distances)
-            std_distances = np.array(std_distances)
-
-            plt.figure(figsize=(12, 7))
-            
-            # Plot the mean line
-            plt.plot(time_steps, mean_distances, label='Mean Distance', color='C0')
-            
-            # Add the shaded standard deviation region
-            plt.fill_between(
-                time_steps, 
-                mean_distances - std_distances, 
-                mean_distances + std_distances, 
-                color='C0', 
-                alpha=0.2, 
-                label='Std. Deviation'
-            )
-            
-            plt.xlabel('Time Step')
-            plt.ylabel('Bond Distance (Å)')
-            plt.title(f'Mean Bond Distance Over Time\n{self.pairs[pair_idx][0]} to {self.pairs[pair_idx][1]}')
-            plt.legend()
-            plt.xlim(time_steps[0], time_steps[-1])
-
-            # Save plot
-            plot_path = self.figures / f'bond_distances_pair_{pair_idx}_time_evolution.png'
+            plot_path = self.figures / f'rdf_pair_{pair_idx}_{self.pairs[pair_idx][0]}_{self.pairs[pair_idx][1]}.png'
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             plt.close()
-            print(f"Saved time evolution plot for pair {pair_idx}: {plot_path}")
+            print(f"Saved RDF plot for pair {pair_idx}: {plot_path}")
 
-            # --- Plot 2: Overall Bond Length Distribution ---
-            
-            # Flatten the list of lists into a single list of all observed distances
-            all_distances_flat = [
-                distance for frame_distances in distances_over_time for distance in frame_distances
-            ]
-
-            if not all_distances_flat:
-                print(f"Skipping distribution plot for pair {pair_idx}: No bonds found.")
-                continue
-
-            plt.figure(figsize=(10, 6))
-            
-            # Create a histogram with a Kernel Density Estimate (KDE) overlay
-            sns.histplot(all_distances_flat, kde=True, stat="density", binwidth=0.05)
-            
-            plt.xlabel('Bond Distance (Å)')
-            plt.ylabel('Density')
-            plt.title(f'Overall Bond Distance Distribution\n{self.pairs[pair_idx][0]} to {self.pairs[pair_idx][1]}')
-            
-            # Save plot
-            dist_plot_path = self.figures / f'bond_distances_pair_{pair_idx}_distribution.png'
-            plt.savefig(dist_plot_path, dpi=300, bbox_inches='tight')
-            plt.close()
-            print(f"Saved distribution plot for pair {pair_idx}: {dist_plot_path}")
-
-    def calculate_bond_distances(self, positions, cell, pair_indices_list):
+    def calculate_rdf_for_pairs(self, positions_dict, cell_array, pair_indices_list):
         """
-        Calculate bond distances for selected atom pairs using vesin.NeighborList.
-        
+        Calculate RDF for selected atom pairs using the selected substructures.
+
         Args:
-            positions: Array of atomic positions.
-            cell: Unit cell parameters.
+            positions_dict: Dict with positions for each structure type over all frames.
+            cell_array: Cell parameters for all frames.
             pair_indices_list: List of tuples containing (indices1, indices2) for each pair.
             
         Returns:
-            A dictionary with bond distances for each pair.
+            A dictionary where keys are pair indices and values are RDF arrays.
         """
-        nl = NeighborList(cutoff=self.bond_distance_threshold, full_list=True)
+        # Create bin edges
+        bin_edges = jnp.arange(0.0, self.max_distance + self.bin_width, self.bin_width)
         
-        # 1. Request pair indices ('P') and distances ('d').
-        #    According to the vesin API, this returns a list of arrays: [pairs, distances]
-        results = nl.compute(
-            points=positions, 
-            box=cell, 
-            periodic=True, 
-            quantities='Pd'
-        )
-        
-        # 2. Unpack the list of arrays by index.
-        #    results[0] is the array of pairs, shape (n_pairs, 2)
-        #    results[1] is the array of distances, shape (n_pairs,)
-        all_pairs = results[0]
-        all_distances = results[1]
-
-        pair_distances = {}
+        rdf_results = {}
         for pair_idx, (indices1, indices2) in enumerate(pair_indices_list):
-            distances = []
-            pair_key = f"pair_{pair_idx}"
+            # Get positions for each substructure
+            # Since we're working with substructures, we need to extract positions of selected atoms
+            all_positions = positions_dict[list(positions_dict.keys())[0]]  # Get positions from first structure
             
-            # Use sets for efficient O(1) membership checking.
-            set1 = set(indices1)
-            set2 = set(indices2)
+            # Extract positions for selected atoms
+            pos_a = all_positions[:, indices1, :]  # Shape: (n_frames, n_atoms_a, 3)
+            pos_b = all_positions[:, indices2, :]  # Shape: (n_frames, n_atoms_b, 3)
             
-            # Iterate through the computed neighbors once to find matching pairs.
-            for (i, j), dist in zip(all_pairs, all_distances):
-                # Check if one atom is in the first group and the other is in the second.
-                if (i in set1 and j in set2) or (i in set2 and j in set1):
-                    distances.append(dist)
+            # Calculate RDF
+            exclude_self = bool(set(indices1) & set(indices2))  # True if there's overlap
+            g_r = compute_rdf(
+                positions_a=pos_a,
+                positions_b=pos_b,
+                cell=cell_array,
+                bin_edges=bin_edges,
+                exclude_self=exclude_self
+            )
             
-            pair_distances[pair_key] = distances
-        
-        return pair_distances
+            rdf_results[f"pair_{pair_idx}"] = g_r
+            
+        return rdf_results
 
     def run(self):
         self.figures.mkdir(parents=True, exist_ok=True)
         dl = TimeBatchedLoader(
-                file=self.file,
-                batch_size=self.batch_size,
-                structures=self.structures,
-                wrap=False,
-                com=False,
-                properties=["position", "cell"],
-                start=self.start,
-                stop=self.stop,
-                step=self.step,
-                map_to_dict=False
-            )
+            file=self.file,
+            batch_size=self.batch_size,
+            structures=self.structures,
+            wrap=False,
+            com=False,
+            properties=["position", "cell"],
+            start=self.start,
+            stop=self.stop,
+            step=self.step,
+            map_to_dict=False,
+        )
         print(dl.first_frame_chem)
         pair_indices = []
         for (smarts1, smarts2), (h1, h2) in zip(self.pairs, self.hydrogens):
@@ -352,45 +291,54 @@ class BondAnalysis(zntrack.Node):
                 img.save(path)
         print("Pair indices:", pair_indices)
         
-        ## Initialize storage for bond distances over time
-        all_bond_distances = {f"pair_{i}": [] for i in range(len(pair_indices))}
-        time_steps = []
-        
-        # Keep track of the absolute frame index
+        # Collect all positions and cells for RDF calculation
+        all_positions = []
+        all_cells = []
         frame_counter = 0
-        
-        # Loop over BATCHES from the data loader
-        for batch in tqdm(dl):
-            pos_batch = batch["position"]
-            cell_batch = batch["cell"]
-            
-            # Loop over each FRAME within the current batch
-            for i in range(pos_batch.shape[0]):
-                # Get data for a single frame
-                single_pos = pos_batch[i]
-                single_cell = cell_batch
+
+        pbar = tqdm(dl, desc="Processing frames", total=dl.total_frames)
+
+        for batch in pbar:
+            if isinstance(batch, dict) and "position" in batch and "cell" in batch:
+                pos_batch = batch["position"]
+                cell_batch = batch["cell"]
                 
-                
-                # Calculate bond distances for this single frame
-                frame_distances = self.calculate_bond_distances(
-                    single_pos, single_cell, pair_indices
-                )
-                
-                # Store distances for each pair for this frame
-                for pair_key, distances in frame_distances.items():
-                    all_bond_distances[pair_key].append(distances)
-                
-                # Calculate and store the correct time step for this frame
-                current_time_step = self.start + frame_counter * self.step
-                time_steps.append(current_time_step)
+                # Handle batch dimensions correctly
+                if hasattr(pos_batch, 'shape') and len(pos_batch.shape) > 2:
+                    # pos_batch is (batch_size, n_atoms, 3)
+                    for i in range(pos_batch.shape[0]):
+                        all_positions.append(pos_batch[i])
+                        all_cells.append(cell_batch)
+                        pbar.update(1)
+                        frame_counter += 1
+                else:
+                    # pos_batch is (n_atoms, 3) - single frame
+                    all_positions.append(pos_batch)
+                    all_cells.append(cell_batch)
+                    pbar.update(1)
+                    frame_counter += 1
+            else:
+                # Legacy format or different structure
+                all_positions.append(batch)
+                all_cells.append(dl.first_frame_atoms.get_cell()[:])
+                pbar.update(1)
                 frame_counter += 1
 
-        # Store results
-        self.bond_distances = {
-            "distances": all_bond_distances,
-            "time_steps": time_steps,
-            "pairs": self.pairs
+        # Convert to jax arrays
+        positions_array = jnp.array(all_positions)  # Shape: (n_frames, n_atoms, 3)
+        cells_array = jnp.array(all_cells)  # Shape: (n_frames, 3, 3)
+        
+        # Create positions dict compatible with RDF calculation
+        positions_dict = {"structure": positions_array}
+        
+        # Calculate RDF for all pairs
+        rdf_data = self.calculate_rdf_for_pairs(positions_dict, cells_array, pair_indices)
+        
+        self.rdf_results = {
+            "rdf_data": {k: v.tolist() for k, v in rdf_data.items()},
+            "pairs": self.pairs,
+            "bin_width": self.bin_width,
+            "max_distance": self.max_distance
         }
         
-        # Generate plots for each pair
-        self.plot_bond_distances(all_bond_distances, time_steps)
+        self.plot_rdf_for_pairs(rdf_data)

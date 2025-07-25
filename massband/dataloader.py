@@ -372,7 +372,7 @@ class TimeBatchedLoader:
     def __post_init__(self):
         if not self.fixed_cell:
             raise NotImplementedError("Non-fixed cell handling is not implemented yet.")
-        if self.map_to_dict and self.com:
+        if not self.map_to_dict and self.com:
             raise ValueError(
                 "Mapping to dict with com=True is not supported. "
                 "Set map_to_dict=False or com=False."
