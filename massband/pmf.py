@@ -20,12 +20,12 @@ class PotentialOfMeanForce(zntrack.Node):
 
     The PMF is calculated using the relation:
     PMF(r) = -kT * ln(g(r))
-    
+
     where:
     - k is Boltzmann constant
     - T is temperature
     - g(r) is the radial distribution function
-    
+
     The PMF represents the effective potential between particles as a function
     of their separation distance, providing insight into the energy landscape
     of interactions.
@@ -36,7 +36,7 @@ class PotentialOfMeanForce(zntrack.Node):
     # Parameters for PMF calculation
     temperature: float = zntrack.params(300.0)  # Temperature in Kelvin
     min_gdr_threshold: float = zntrack.params(1e-6)  # Minimum g(r) value to avoid ln(0)
-    
+
     # Outputs
     pmf_values: dict[str, list[float]] = zntrack.metrics()
     figures: Path = zntrack.outs_path(zntrack.nwd / "pmf_figures")
@@ -45,20 +45,20 @@ class PotentialOfMeanForce(zntrack.Node):
         """Calculate PMF from RDF using PMF = -kT * ln(g(r)) in eV."""
         # Create temperature with units
         T = temperature * ureg.kelvin
-        
+
         # Apply minimum threshold to avoid log(0)
         g_r_safe = np.maximum(g_r, self.min_gdr_threshold)
-        
+
         # Calculate PMF using Boltzmann constant from pint
         pmf_dimensionless = -np.log(g_r_safe)
         pmf_quantity = ureg.boltzmann_constant * T * pmf_dimensionless
-        
+
         # Convert to eV and get magnitude
-        pmf_ev = pmf_quantity.to('eV').magnitude
-        
+        pmf_ev = pmf_quantity.to("eV").magnitude
+
         # Set PMF to NaN where original g(r) was effectively zero
         pmf_ev[g_r < self.min_gdr_threshold] = np.nan
-        
+
         return pmf_ev
 
     def _plot_pmf_analysis(
@@ -92,7 +92,7 @@ class PotentialOfMeanForce(zntrack.Node):
         if np.any(finite_mask):
             ax2.plot(r[finite_mask], pmf[finite_mask], "r-", linewidth=2, label="PMF")
             ax2.axhline(0.0, color="grey", ls=":", alpha=0.7, label="PMF = 0")
-            
+
             # Set reasonable y-limits for PMF plot
             finite_pmf = pmf[finite_mask]
             if len(finite_pmf) > 0:
@@ -102,8 +102,14 @@ class PotentialOfMeanForce(zntrack.Node):
                 y_max = min(pmf_max, 10.0)
                 ax2.set_ylim(y_min * 1.2, y_max * 1.2)
         else:
-            ax2.text(0.5, 0.5, "No finite PMF values to plot", 
-                    ha='center', va='center', transform=ax2.transAxes)
+            ax2.text(
+                0.5,
+                0.5,
+                "No finite PMF values to plot",
+                ha="center",
+                va="center",
+                transform=ax2.transAxes,
+            )
 
         ax2.set_xlabel("Distance r / Å")
         ax2.set_ylabel("PMF / eV")
@@ -125,7 +131,7 @@ class PotentialOfMeanForce(zntrack.Node):
         bin_width = self.rdf.bin_width
 
         log.info(f"Calculating PMF at temperature {self.temperature} K")
-        
+
         for pair_key, g_r_list in self.rdf.results.items():
             g_r = np.array(g_r_list)
             r = np.arange(len(g_r)) * bin_width + bin_width / 2.0
@@ -141,10 +147,8 @@ class PotentialOfMeanForce(zntrack.Node):
             # Count finite PMF values for logging
             finite_count = np.sum(np.isfinite(pmf))
             total_count = len(pmf)
-            
-            log.info(
-                f"PMF for '{pair_key}': {finite_count}/{total_count} finite values"
-            )
+
+            log.info(f"PMF for '{pair_key}': {finite_count}/{total_count} finite values")
 
             # Create analysis plot
             plot_title = f"PMF Analysis: {pair_key.replace('|', '-')}"

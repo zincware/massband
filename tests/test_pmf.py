@@ -1,11 +1,7 @@
 import os
 
-import numpy as np
-import pytest
-
 from massband.pmf import PotentialOfMeanForce
 from massband.rdf import RadialDistributionFunction
-
 
 
 def test_pmf_node(tmp_path, ec_emc, ec_emc_smiles):
