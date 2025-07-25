@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import rdkit2ase
 import znh5md
 from jax import jit, lax
+from rdkit import Chem
 
 log = logging.getLogger(__name__)
 
@@ -403,6 +404,11 @@ class TimeBatchedLoader:
 
         self.iter_offset = 0
         log.info(f"Initialized loader for {self.total_frames} frames from {self.file}")
+
+    @property
+    def first_frame_chem(self) -> Chem.Mol:
+        """Get the first frame as an RDKit molecule for substructure matching."""
+        return rdkit2ase.ase2rdkit(self.first_frame_atoms, suggestions=self.structures)
 
     def __len__(self):
         if not hasattr(self, "total_frames"):
