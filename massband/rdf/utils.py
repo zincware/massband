@@ -1,8 +1,9 @@
 import itertools
+from functools import partial
+
 import jax.numpy as jnp
 from ase.data import atomic_numbers
 from jax import jit, vmap
-from functools import partial
 
 
 def generate_sorted_pairs(structure_names):

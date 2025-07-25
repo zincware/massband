@@ -500,7 +500,9 @@ class TimeBatchedLoader:
                         mol_positions = unwrapped_pos[:, mol_indices_array, :]
                         masses = self.masses[mol_indices_array]
                         total_mol_mass = jnp.sum(masses, axis=1)
-                        numerator = jnp.sum(mol_positions * masses[None, :, :, None], axis=2)
+                        numerator = jnp.sum(
+                            mol_positions * masses[None, :, :, None], axis=2
+                        )
                         com = numerator / total_mol_mass[None, :, None]
                         position_data[structure] = com
 

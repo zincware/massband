@@ -11,7 +11,8 @@ from massband.abc import ComparisonResults
 from massband.dataloader import IndependentBatchedLoader, TimeBatchedLoader
 from massband.rdf_fit import FIT_METHODS
 from massband.rdf_plot import plot_rdf
-from .utils import generate_sorted_pairs, compute_rdf
+
+from .utils import compute_rdf, generate_sorted_pairs
 
 log = logging.getLogger(__name__)
 
