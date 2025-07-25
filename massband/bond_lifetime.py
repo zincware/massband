@@ -80,7 +80,6 @@ class SubstructureBondLifetime(zntrack.Node):
 
     def _plot_results(self, lifetime_data):
         """Create and save plots for each pair's autocorrelation function."""
-        plt.style.use("seaborn-v0_8-paper")
         self.figures.mkdir(parents=True, exist_ok=True)
 
         for pair_idx, data in lifetime_data.items():
