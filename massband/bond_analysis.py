@@ -6,6 +6,11 @@ from typing import Literal, List, Tuple, Union
 from rdkit import Chem
 from rdkit.Chem import rdchem
 from rdkit.Chem import Draw
+import numpy as np
+import matplotlib.pyplot as plt
+from vesin import NeighborList
+from tqdm import tqdm
+import seaborn as sns
 
 def select_atoms_flat_unique(
     mol: rdchem.Mol,
@@ -182,11 +187,140 @@ class BondAnalysis(zntrack.Node):
     structures: list[str] = zntrack.params(default_factory=list)
     pairs: list[tuple[str, str]] = zntrack.params(default_factory=list)
     hydrogens: list[tuple[Literal["include", "exclude", "isolated"], Literal["include", "exclude", "isolated"]]] = zntrack.params(default_factory=list)
+    bond_distance_threshold: float = zntrack.params(default=3.0)
     batch_size: int = zntrack.params(default=64)
     start: int = zntrack.params(default=0)
     stop: int|None = zntrack.params(default=None)
     step: int = zntrack.params(default=1)
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
+    bond_distances: dict = zntrack.outs()
+
+    def plot_bond_distances(self, all_bond_distances, time_steps):
+        """
+        Create plots showing bond distance evolution and distribution for each pair.
+        
+        This function generates two plots per pair:
+        1. The mean bond distance over time, with the standard deviation as a shaded area.
+        2. A histogram and Kernel Density Estimate (KDE) of all bond distances found.
+        
+        Args:
+            all_bond_distances: Dictionary with bond distances for each pair over time.
+            time_steps: List of time step indices.
+        """
+        # Use a nicer plot style
+        sns.set_theme(style="whitegrid")
+
+        for pair_idx, (pair_key, distances_over_time) in enumerate(all_bond_distances.items()):
+            
+            # --- Plot 1: Mean and Standard Deviation over Time ---
+            
+            mean_distances = [np.mean(d) if d else np.nan for d in distances_over_time]
+            std_distances = [np.std(d) if d else np.nan for d in distances_over_time]
+            
+            # Convert to numpy arrays for easier calculations
+            mean_distances = np.array(mean_distances)
+            std_distances = np.array(std_distances)
+
+            plt.figure(figsize=(12, 7))
+            
+            # Plot the mean line
+            plt.plot(time_steps, mean_distances, label='Mean Distance', color='C0')
+            
+            # Add the shaded standard deviation region
+            plt.fill_between(
+                time_steps, 
+                mean_distances - std_distances, 
+                mean_distances + std_distances, 
+                color='C0', 
+                alpha=0.2, 
+                label='Std. Deviation'
+            )
+            
+            plt.xlabel('Time Step')
+            plt.ylabel('Bond Distance (Å)')
+            plt.title(f'Mean Bond Distance Over Time\n{self.pairs[pair_idx][0]} to {self.pairs[pair_idx][1]}')
+            plt.legend()
+            plt.xlim(time_steps[0], time_steps[-1])
+
+            # Save plot
+            plot_path = self.figures / f'bond_distances_pair_{pair_idx}_time_evolution.png'
+            plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Saved time evolution plot for pair {pair_idx}: {plot_path}")
+
+            # --- Plot 2: Overall Bond Length Distribution ---
+            
+            # Flatten the list of lists into a single list of all observed distances
+            all_distances_flat = [
+                distance for frame_distances in distances_over_time for distance in frame_distances
+            ]
+
+            if not all_distances_flat:
+                print(f"Skipping distribution plot for pair {pair_idx}: No bonds found.")
+                continue
+
+            plt.figure(figsize=(10, 6))
+            
+            # Create a histogram with a Kernel Density Estimate (KDE) overlay
+            sns.histplot(all_distances_flat, kde=True, stat="density", binwidth=0.05)
+            
+            plt.xlabel('Bond Distance (Å)')
+            plt.ylabel('Density')
+            plt.title(f'Overall Bond Distance Distribution\n{self.pairs[pair_idx][0]} to {self.pairs[pair_idx][1]}')
+            
+            # Save plot
+            dist_plot_path = self.figures / f'bond_distances_pair_{pair_idx}_distribution.png'
+            plt.savefig(dist_plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            print(f"Saved distribution plot for pair {pair_idx}: {dist_plot_path}")
+
+    def calculate_bond_distances(self, positions, cell, pair_indices_list):
+        """
+        Calculate bond distances for selected atom pairs using vesin.NeighborList.
+        
+        Args:
+            positions: Array of atomic positions.
+            cell: Unit cell parameters.
+            pair_indices_list: List of tuples containing (indices1, indices2) for each pair.
+            
+        Returns:
+            A dictionary with bond distances for each pair.
+        """
+        nl = NeighborList(cutoff=self.bond_distance_threshold, full_list=True)
+        
+        # 1. Request pair indices ('P') and distances ('d').
+        #    According to the vesin API, this returns a list of arrays: [pairs, distances]
+        results = nl.compute(
+            points=positions, 
+            box=cell, 
+            periodic=True, 
+            quantities='Pd'
+        )
+        
+        # 2. Unpack the list of arrays by index.
+        #    results[0] is the array of pairs, shape (n_pairs, 2)
+        #    results[1] is the array of distances, shape (n_pairs,)
+        all_pairs = results[0]
+        all_distances = results[1]
+
+        pair_distances = {}
+        for pair_idx, (indices1, indices2) in enumerate(pair_indices_list):
+            distances = []
+            pair_key = f"pair_{pair_idx}"
+            
+            # Use sets for efficient O(1) membership checking.
+            set1 = set(indices1)
+            set2 = set(indices2)
+            
+            # Iterate through the computed neighbors once to find matching pairs.
+            for (i, j), dist in zip(all_pairs, all_distances):
+                # Check if one atom is in the first group and the other is in the second.
+                if (i in set1 and j in set2) or (i in set2 and j in set1):
+                    distances.append(dist)
+            
+            pair_distances[pair_key] = distances
+        
+        return pair_distances
 
     def run(self):
         self.figures.mkdir(parents=True, exist_ok=True)
@@ -200,6 +334,7 @@ class BondAnalysis(zntrack.Node):
                 start=self.start,
                 stop=self.stop,
                 step=self.step,
+                map_to_dict=False
             )
         print(dl.first_frame_chem)
         pair_indices = []
@@ -213,8 +348,49 @@ class BondAnalysis(zntrack.Node):
             while Path(path).exists():
                 path = self.figures / f"{smarts1}_{smarts2}_{idx}.png"
                 idx += 1
-            img.save(path)
+            if img is not None:
+                img.save(path)
         print("Pair indices:", pair_indices)
-        for batch in dl:
-            pos = batch["position"]
-            cell = batch["cell"]
+        
+        ## Initialize storage for bond distances over time
+        all_bond_distances = {f"pair_{i}": [] for i in range(len(pair_indices))}
+        time_steps = []
+        
+        # Keep track of the absolute frame index
+        frame_counter = 0
+        
+        # Loop over BATCHES from the data loader
+        for batch in tqdm(dl):
+            pos_batch = batch["position"]
+            cell_batch = batch["cell"]
+            
+            # Loop over each FRAME within the current batch
+            for i in range(pos_batch.shape[0]):
+                # Get data for a single frame
+                single_pos = pos_batch[i]
+                single_cell = cell_batch
+                
+                
+                # Calculate bond distances for this single frame
+                frame_distances = self.calculate_bond_distances(
+                    single_pos, single_cell, pair_indices
+                )
+                
+                # Store distances for each pair for this frame
+                for pair_key, distances in frame_distances.items():
+                    all_bond_distances[pair_key].append(distances)
+                
+                # Calculate and store the correct time step for this frame
+                current_time_step = self.start + frame_counter * self.step
+                time_steps.append(current_time_step)
+                frame_counter += 1
+
+        # Store results
+        self.bond_distances = {
+            "distances": all_bond_distances,
+            "time_steps": time_steps,
+            "pairs": self.pairs
+        }
+        
+        # Generate plots for each pair
+        self.plot_bond_distances(all_bond_distances, time_steps)
