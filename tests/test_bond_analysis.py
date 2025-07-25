@@ -1,7 +1,7 @@
 import pytest
 from rdkit import Chem
 
-from massband.bond_analysis import select_atoms_flat_unique
+from massband.rdf import select_atoms_flat_unique
 
 
 @pytest.fixture
