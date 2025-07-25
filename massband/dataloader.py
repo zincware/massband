@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import rdkit2ase
 import znh5md
 from jax import jit, lax
+from rdkit import Chem
 
 log = logging.getLogger(__name__)
 
@@ -366,10 +367,16 @@ class TimeBatchedLoader:
     properties: list[
         t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]
     ] = dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
+    map_to_dict: bool = True
 
     def __post_init__(self):
         if not self.fixed_cell:
             raise NotImplementedError("Non-fixed cell handling is not implemented yet.")
+        if not self.map_to_dict and self.com:
+            raise ValueError(
+                "Mapping to dict with com=True is not supported. "
+                "Set map_to_dict=False or com=False."
+            )
 
         self.handler = znh5md.IO(
             self.file, variable_shape=False, include=["position", "velocity", "box"]
@@ -403,6 +410,11 @@ class TimeBatchedLoader:
 
         self.iter_offset = 0
         log.info(f"Initialized loader for {self.total_frames} frames from {self.file}")
+
+    @property
+    def first_frame_chem(self) -> Chem.Mol:
+        """Get the first frame as an RDKit molecule for substructure matching."""
+        return rdkit2ase.ase2rdkit(self.first_frame_atoms, suggestions=self.structures)
 
     def __len__(self):
         if not hasattr(self, "total_frames"):
@@ -475,31 +487,36 @@ class TimeBatchedLoader:
         output = {}
 
         if "position" in self.properties:
-            position_data = defaultdict(list)
-            for structure, all_mols in self.indices.items():
-                if not all_mols:
-                    continue
-                mol_indices_array = jnp.array(all_mols)
-                if not self.com:
-                    atom_indices = mol_indices_array.flatten()
-                    position_data[structure] = unwrapped_pos[:, atom_indices, :]
-                else:
-                    mol_positions = unwrapped_pos[:, mol_indices_array, :]
-                    masses = self.masses[mol_indices_array]
-                    total_mol_mass = jnp.sum(masses, axis=1)
-                    numerator = jnp.sum(mol_positions * masses[None, :, :, None], axis=2)
-                    com = numerator / total_mol_mass[None, :, None]
-                    position_data[structure] = com
+            if self.map_to_dict:
+                position_data = defaultdict(list)
+                for structure, all_mols in self.indices.items():
+                    if not all_mols:
+                        continue
+                    mol_indices_array = jnp.array(all_mols)
+                    if not self.com:
+                        atom_indices = mol_indices_array.flatten()
+                        position_data[structure] = unwrapped_pos[:, atom_indices, :]
+                    else:
+                        mol_positions = unwrapped_pos[:, mol_indices_array, :]
+                        masses = self.masses[mol_indices_array]
+                        total_mol_mass = jnp.sum(masses, axis=1)
+                        numerator = jnp.sum(
+                            mol_positions * masses[None, :, :, None], axis=2
+                        )
+                        com = numerator / total_mol_mass[None, :, None]
+                        position_data[structure] = com
 
-            position_results = {}
-            for structure, pos in position_data.items():
-                if self.wrap:
-                    pos = wrap_positions(
-                        pos, self.first_frame_cell, self.first_frame_inv_cell
-                    )
-                position_results[structure] = pos
-            output["position"] = position_results
-
+                position_results = {}
+                for structure, pos in position_data.items():
+                    if self.wrap:
+                        pos = wrap_positions(
+                            pos, self.first_frame_cell, self.first_frame_inv_cell
+                        )
+                    position_results[structure] = pos
+                output["position"] = position_results
+            else:
+                # If not mapping to dict, return a single array
+                output["position"] = unwrapped_pos
         if "velocity" in self.properties and batch_velocities is not None:
             velocity_data = defaultdict(list)
             for structure, all_mols in self.indices.items():

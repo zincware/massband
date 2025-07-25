@@ -2,8 +2,7 @@ import os
 
 import pytest
 
-from massband.coordination import CoordinationNumber
-from massband.rdf import RadialDistributionFunction
+import massband
 
 # Reference coordination numbers calculated from EC-EMC test system
 # These values were computed using the coordination number analysis with:
@@ -97,7 +96,7 @@ def test_coordination_number_node(tmp_path, ec_emc):
     os.chdir(tmp_path)
 
     # First create an RDF node
-    rdf_node = RadialDistributionFunction(
+    rdf_node = massband.RadialDistributionFunction(
         file=ec_emc,
         structures=None,
         stop=1000,  # Use fewer frames for faster testing
@@ -105,7 +104,7 @@ def test_coordination_number_node(tmp_path, ec_emc):
     )
     rdf_node.run()
 
-    coord_node = CoordinationNumber(
+    coord_node = massband.CoordinationNumber(
         rdf=rdf_node,
         density_threshold=0.5,
         max_integration_distance=8.0,
@@ -115,3 +114,27 @@ def test_coordination_number_node(tmp_path, ec_emc):
     for key in cn:
         assert coord_node.coordination_numbers[key] == pytest.approx(cn[key], rel=1e-5)
         assert coord_node.first_shell_distances[key] == pytest.approx(dist[key], rel=1e-5)
+
+
+def test_coordination_number_node_substructure_rdf(tmp_path, ec_emc, ec_emc_smiles):
+    """Test CoordinationNumber with substructure RDF."""
+    os.chdir(tmp_path)
+
+    rdf_node = massband.SubstructureRadialDistributionFunction(
+        file=ec_emc,
+        structures=ec_emc_smiles,
+        pairs=[("[F]", "[P]")],
+        hydrogens=[("include", "include")],
+        stop=1000,  # Use fewer frames for faster testing
+        bin_width=0.1,
+    )
+    rdf_node.run()
+
+    coord_node = massband.CoordinationNumber(
+        rdf=rdf_node,
+        density_threshold=0.5,
+        max_integration_distance=8.0,
+    )
+    coord_node.run()
+
+    assert set(coord_node.coordination_numbers) == {"[F]|[P]", "[P]|[F]"}
