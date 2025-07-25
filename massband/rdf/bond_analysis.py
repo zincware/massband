@@ -176,7 +176,7 @@ import numpy as np
 from pathlib import Path
 from typing import Literal
 import jax.numpy as jnp
-from massband.rdf.utils import compute_rdf
+from .utils import compute_rdf
 
 class SubstructureRadialDistributionFunction(zntrack.Node):
     """Calculate radial distribution functions for selected substructure pairs."""
@@ -191,7 +191,8 @@ class SubstructureRadialDistributionFunction(zntrack.Node):
     stop: int | None = zntrack.params(default=None)
     step: int = zntrack.params(default=1)
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
-    rdf_results: dict = zntrack.outs()
+    results: dict = zntrack.outs()
+    partial_number_densities: dict[str, float] = zntrack.outs()
 
     def plot_rdf_for_pairs(self, rdf_data):
         """
@@ -291,6 +292,19 @@ class SubstructureRadialDistributionFunction(zntrack.Node):
                 img.save(path)
         print("Pair indices:", pair_indices)
         
+        # Calculate partial number densities from first frame
+        first_frame_atoms = dl.first_frame_atoms
+        volume = first_frame_atoms.get_volume()  # In Å³
+        self.partial_number_densities = {}
+        
+        for pair_idx, (indices1, indices2) in enumerate(pair_indices):
+            smarts1, smarts2 = self.pairs[pair_idx]
+            
+            # Store number densities using the same keys as regular RDF (SMARTS patterns)
+            # This ensures compatibility with CN and PMF nodes
+            self.partial_number_densities[smarts1] = len(indices1) / volume
+            self.partial_number_densities[smarts2] = len(indices2) / volume
+        
         # Collect all positions and cells for RDF calculation
         all_positions = []
         all_cells = []
@@ -334,11 +348,15 @@ class SubstructureRadialDistributionFunction(zntrack.Node):
         # Calculate RDF for all pairs
         rdf_data = self.calculate_rdf_for_pairs(positions_dict, cells_array, pair_indices)
         
-        self.rdf_results = {
-            "rdf_data": {k: v.tolist() for k, v in rdf_data.items()},
-            "pairs": self.pairs,
-            "bin_width": self.bin_width,
-            "max_distance": self.max_distance
-        }
+        # Store results in the same format as regular RDF for compatibility
+        results_formatted = {}
+        for pair_idx, (smarts1, smarts2) in enumerate(self.pairs):
+            pair_key = f"pair_{pair_idx}"
+            if pair_key in rdf_data:
+                # Use the same key format as regular RDF: "structure1|structure2"
+                results_formatted[f"{smarts1}|{smarts2}"] = rdf_data[pair_key].tolist()
+        
+        # Store both internal format and RDF-compatible format
+        self.results = results_formatted  # This matches the regular RDF.results format
         
         self.plot_rdf_for_pairs(rdf_data)
