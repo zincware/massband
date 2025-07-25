@@ -60,9 +60,12 @@ class SubstructureRadialDistributionFunction(zntrack.Node):
             plt.grid(True, alpha=0.3)
             plt.xlim(0, min(self.max_distance, r_values[-1]))
 
+            # Sanitize SMARTS patterns for safe filenames
+            safe_smarts1 = self.pairs[pair_idx][0].replace("[", "").replace("]", "").replace(":", "_")
+            safe_smarts2 = self.pairs[pair_idx][1].replace("[", "").replace("]", "").replace(":", "_")
             plot_path = (
                 self.figures
-                / f"rdf_pair_{pair_idx}_{self.pairs[pair_idx][0]}_{self.pairs[pair_idx][1]}.png"
+                / f"rdf_pair_{pair_idx}_{safe_smarts1}_{safe_smarts2}.png"
             )
             plt.savefig(plot_path, dpi=300, bbox_inches="tight")
             plt.close()
