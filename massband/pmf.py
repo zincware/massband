@@ -5,11 +5,14 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pint
 import zntrack
 
 from massband.rdf import RadialDistributionFunction
 
 log = logging.getLogger(__name__)
+
+ureg = pint.UnitRegistry()
 
 
 class PotentialOfMeanForce(zntrack.Node):
@@ -39,20 +42,24 @@ class PotentialOfMeanForce(zntrack.Node):
     figures: Path = zntrack.outs_path(zntrack.nwd / "pmf_figures")
 
     def _calculate_pmf(self, g_r: np.ndarray, temperature: float) -> np.ndarray:
-        """Calculate PMF from RDF using PMF = -kT * ln(g(r))."""
-        # Boltzmann constant in kcal/(mol·K)
-        k_B = 0.001987204  # kcal/(mol·K)
+        """Calculate PMF from RDF using PMF = -kT * ln(g(r)) in eV."""
+        # Create temperature with units
+        T = temperature * ureg.kelvin
         
         # Apply minimum threshold to avoid log(0)
         g_r_safe = np.maximum(g_r, self.min_gdr_threshold)
         
-        # Calculate PMF in kcal/mol
-        pmf = -k_B * temperature * np.log(g_r_safe)
+        # Calculate PMF using Boltzmann constant from pint
+        pmf_dimensionless = -np.log(g_r_safe)
+        pmf_quantity = ureg.boltzmann_constant * T * pmf_dimensionless
+        
+        # Convert to eV and get magnitude
+        pmf_ev = pmf_quantity.to('eV').magnitude
         
         # Set PMF to NaN where original g(r) was effectively zero
-        pmf[g_r < self.min_gdr_threshold] = np.nan
+        pmf_ev[g_r < self.min_gdr_threshold] = np.nan
         
-        return pmf
+        return pmf_ev
 
     def _plot_pmf_analysis(
         self,
@@ -93,13 +100,13 @@ class PotentialOfMeanForce(zntrack.Node):
                 # Limit extreme values for better visualization
                 y_min = max(pmf_min, -10.0)
                 y_max = min(pmf_max, 10.0)
-                ax2.set_ylim(y_min - 0.5, y_max + 0.5)
+                ax2.set_ylim(y_min * 1.2, y_max * 1.2)
         else:
             ax2.text(0.5, 0.5, "No finite PMF values to plot", 
                     ha='center', va='center', transform=ax2.transAxes)
 
-        ax2.set_xlabel("Distance r (Å)")
-        ax2.set_ylabel("PMF (kcal/mol)")
+        ax2.set_xlabel("Distance r / Å")
+        ax2.set_ylabel("PMF / eV")
         ax2.set_title(f"Potential of Mean Force (T = {self.temperature} K)")
         ax2.legend()
         ax2.grid(True, alpha=0.3)
@@ -118,7 +125,7 @@ class PotentialOfMeanForce(zntrack.Node):
         bin_width = self.rdf.bin_width
 
         log.info(f"Calculating PMF at temperature {self.temperature} K")
-
+        
         for pair_key, g_r_list in self.rdf.results.items():
             g_r = np.array(g_r_list)
             r = np.arange(len(g_r)) * bin_width + bin_width / 2.0
