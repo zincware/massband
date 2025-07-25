@@ -8,7 +8,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import zntrack
 from rdkit import Chem
+from scipy.optimize import curve_fit
 from tqdm import tqdm
+from jax.scipy.signal import fftconvolve
+
 
 from massband.dataloader import TimeBatchedLoader
 from massband.rdf.utils import select_atoms_flat_unique, visualize_selected_molecules
@@ -17,7 +20,6 @@ from massband.rdf.utils import select_atoms_flat_unique, visualize_selected_mole
 def _get_molecule_ids(mol: Chem.Mol) -> np.ndarray:
     """Creates an array mapping each atom index to a molecule ID."""
     mol_ids = np.zeros(mol.GetNumAtoms(), dtype=int)
-    # GetMolFrags returns a tuple of tuples, e.g., ((0, 1, 2), (3, 4, 5))
     for mol_id, atom_indices in enumerate(Chem.GetMolFrags(mol, asMols=False)):
         mol_ids[list(atom_indices)] = mol_id
     return mol_ids
@@ -34,48 +36,24 @@ def _compute_vectors_pbc(pos_a, pos_b, cell):
 
 @jax.jit
 def _compute_bond_matrix(
-    positions: jnp.ndarray,
-    cell: jnp.ndarray,
-    indices_a: jnp.ndarray,
-    indices_b: jnp.ndarray,
-    mol_ids_a: jnp.ndarray,
-    mol_ids_b: jnp.ndarray,
-    distance_cutoff: float,
-    exclude_self: bool,
+    positions: jnp.ndarray, cell: jnp.ndarray, indices_a: jnp.ndarray,
+    indices_b: jnp.ndarray, mol_ids_a: jnp.ndarray, mol_ids_b: jnp.ndarray,
+    distance_cutoff: float, exclude_self: bool,
 ) -> jnp.ndarray:
-    """
-    Computes a boolean matrix indicating bond formation based on distance.
-
-    Args:
-        positions: Atom positions for the frame. (n_atoms, 3)
-        cell: Simulation cell matrix. (3, 3)
-        indices_a: Indices of atoms in the first group. (n_atoms_a,)
-        indices_b: Indices of atoms in the second group. (n_atoms_b,)
-        mol_ids_a: Molecule IDs for each atom in group A.
-        mol_ids_b: Molecule IDs for each atom in group B.
-        distance_cutoff: Max distance between atoms to be considered bonded.
-        exclude_self: If True, all intramolecular pairs are ignored.
-    """
+    """Computes a boolean matrix indicating bond formation based on distance."""
     pos_a, pos_b = positions[indices_a], positions[indices_b]
     pos_a_exp, pos_b_exp = pos_a[:, jnp.newaxis, :], pos_b[jnp.newaxis, :, :]
 
     vec_ab = _compute_vectors_pbc(pos_a_exp, pos_b_exp, cell)
     dist_ab = jnp.linalg.norm(vec_ab, axis=-1)
 
-    # Create a mask to identify pairs of atoms from the same molecule.
-    # This will be True if atom_i and atom_j are in the same molecule.
     intramolecular_mask = (mol_ids_a[:, jnp.newaxis] == mol_ids_b[jnp.newaxis, :])
-
-    # Use jax.lax.cond to apply the mask only when exclude_self is True.
     dist_ab = jax.lax.cond(
         exclude_self,
-        # If True, set distances for all intramolecular pairs to infinity.
         lambda d: jnp.where(intramolecular_mask, jnp.inf, d),
-        # If False, do nothing to the distances.
         lambda d: d,
         dist_ab
     )
-
     return dist_ab < distance_cutoff
 
 
@@ -86,12 +64,7 @@ class SubstructureBondLifetime(zntrack.Node):
     file: Path = zntrack.deps_path()
     structures: list[str] = zntrack.params(default_factory=list)
     pairs: list[tuple[str, str]] = zntrack.params(default_factory=list)
-    hydrogens: list[
-        tuple[
-            Literal["include", "exclude", "isolated"],
-            Literal["include", "exclude", "isolated"],
-        ]
-    ] = zntrack.params(default_factory=list)
+    hydrogens: list[tuple[...]] = zntrack.params(default_factory=list)
     distance_cutoff: float = zntrack.params(3.5)
     batch_size: int = zntrack.params(64)
     start: int = zntrack.params(0)
@@ -106,15 +79,29 @@ class SubstructureBondLifetime(zntrack.Node):
 
     def _plot_results(self, lifetime_data):
         """Create and save plots for each pair's autocorrelation function."""
+        plt.style.use('seaborn-v0_8-paper')
         self.figures.mkdir(parents=True, exist_ok=True)
+
         for pair_idx, data in lifetime_data.items():
             pair_smarts = self.pairs[pair_idx]
-            time_axis_ps, autocorr, lifetime_ps = data["time_axis_ps"], data["autocorrelation"], data["lifetime_ps"]
-            plt.figure(figsize=(10, 6)); plt.plot(time_axis_ps, autocorr, label=f"Lifetime τ = {lifetime_ps:.2f} ps")
-            plt.xlabel("Time (ps)"); plt.ylabel("Bond Autocorrelation C(t)"); plt.title(f"Bond Lifetime: {pair_smarts[0]} – {pair_smarts[1]}")
-            plt.legend(); plt.grid(True, linestyle="--", alpha=0.6); plt.xlim(left=0); plt.ylim(bottom=0)
+            time_ps = np.array(data["time_axis_ps"])
+            autocorr = np.array(data["autocorrelation"])
+            lifetime_int_ps = data["lifetime_integrated_ps"]
+
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+            fig.suptitle(f"Bond Lifetime: {pair_smarts[0]} – {pair_smarts[1]}\n(Distance Cutoff = {self.distance_cutoff} Å)", fontsize=14)
+
+            ax1.plot(time_ps, autocorr, 'o', markersize=4, label=f"Simulation Data\nτ (integrated) = {lifetime_int_ps:.2f} ps")
+            ax1.set_xlabel("Time (ps)"); ax1.set_ylabel("Bond Autocorrelation C(t)")
+            ax1.set_title("Linear Scale"); ax1.grid(True, linestyle='--', alpha=0.6)
+
+            ax2.plot(time_ps, autocorr, 'o', markersize=4)
+            ax2.set_xlabel("Time (ps)"); ax2.set_ylabel("Bond Autocorrelation C(t) (log scale)")
+            ax2.set_title("Log Scale & Fit"); ax2.grid(True, linestyle='--', alpha=0.6); ax2.set_yscale('log')
+
+            ax1.legend(); fig.tight_layout(rect=[0, 0.03, 1, 0.95])
             plot_path = self.figures / f"lifetime_pair_{pair_idx}_{pair_smarts[0]}_{pair_smarts[1]}.png"
-            plt.savefig(plot_path, dpi=300, bbox_inches="tight"); plt.close()
+            plt.savefig(plot_path, dpi=300); plt.close()
             print(f"Saved lifetime plot to {plot_path}")
 
     def run(self):
@@ -124,10 +111,13 @@ class SubstructureBondLifetime(zntrack.Node):
             properties=["position", "cell"], start=self.start, stop=self.stop, step=self.step,
             com=False, map_to_dict=False,
         )
-        time_step_fs = self.timestep * self.sampling_rate
+        # Correctly calculate the effective time between analyzed frames in femtoseconds
+        time_step_fs = self.timestep * self.sampling_rate * self.step
 
+        ## --------------------------------------------------------------------
+        ## Step 1: Select atoms and prepare molecule IDs
+        ## --------------------------------------------------------------------
         print("Step 1: Selecting atoms and preparing molecule IDs...")
-        # Create a map from atom index to molecule ID for the whole system
         molecule_ids = _get_molecule_ids(dl.first_frame_chem)
         
         all_pair_data = []
@@ -135,7 +125,6 @@ class SubstructureBondLifetime(zntrack.Node):
             indices1 = select_atoms_flat_unique(dl.first_frame_chem, smarts1, hydrogens=h1)
             indices2 = select_atoms_flat_unique(dl.first_frame_chem, smarts2, hydrogens=h2)
             
-            # Get the molecule IDs corresponding to the selected atoms
             mol_ids1 = molecule_ids[indices1]
             mol_ids2 = molecule_ids[indices2]
             
@@ -149,26 +138,32 @@ class SubstructureBondLifetime(zntrack.Node):
                 (jnp.array(indices1), jnp.array(indices2), jnp.array(mol_ids1), jnp.array(mol_ids2), exclude_self)
             )
 
+        ## --------------------------------------------------------------------
+        ## Step 2: Process trajectory to identify bonds in each frame
+        ## --------------------------------------------------------------------
         print(f"\nStep 2: Processing {dl.total_frames} frames to identify bonds...")
         all_bond_matrices = []
-        pbar = tqdm(dl, total=dl.total_frames, desc="Identifying bonds")
-        
-        for batch in pbar:
-            positions_batch, cell_batch = jnp.array(batch["position"]), jnp.array(batch["cell"])
-            
-            for i in range(positions_batch.shape[0]):
-                positions_frame = positions_batch[i]
-                cell_frame = cell_batch[i] if cell_batch.ndim == 4 else cell_batch
+        with tqdm(total=dl.total_frames, desc="Identifying bonds") as pbar:
+            for batch in dl:
+                positions_batch, cell_batch = jnp.array(batch["position"]), jnp.array(batch["cell"])
+                
+                for i in range(positions_batch.shape[0]):
+                    positions_frame = positions_batch[i]
+                    cell_frame = cell_batch[i] if cell_batch.ndim == 4 else cell_batch
 
-                frame_bonds = []
-                for indices1, indices2, mol_ids1, mol_ids2, exclude_self in all_pair_data:
-                    bond_matrix = _compute_bond_matrix(
-                        positions_frame, cell_frame, indices1, indices2, mol_ids1, mol_ids2, 
-                        self.distance_cutoff, exclude_self
-                    )
-                    frame_bonds.append(bond_matrix)
-                all_bond_matrices.append(frame_bonds)
+                    frame_bonds = []
+                    for indices1, indices2, mol_ids1, mol_ids2, exclude_self in all_pair_data:
+                        bond_matrix = _compute_bond_matrix(
+                            positions_frame, cell_frame, indices1, indices2, mol_ids1, mol_ids2, 
+                            self.distance_cutoff, exclude_self
+                        )
+                        frame_bonds.append(bond_matrix)
+                    all_bond_matrices.append(frame_bonds)
+                    pbar.update(1)
 
+        ## --------------------------------------------------------------------
+        ## Step 3: Calculate autocorrelation and lifetimes
+        ## --------------------------------------------------------------------
         print("\nStep 3: Calculating autocorrelation and lifetimes...")
         final_results = {}
         for pair_idx, _ in enumerate(self.pairs):
@@ -181,20 +176,28 @@ class SubstructureBondLifetime(zntrack.Node):
                 print(f"Warning: No bonds ever formed for pair {pair_idx}. Skipping.")
                 autocorr, lifetime_ps = np.zeros(max_delay), 0.0
             else:
-                autocorr = []
-                for t in tqdm(range(max_delay), desc=f"Autocorrelation Pair {pair_idx}", leave=False):
-                    h0_ht = bond_history[:num_frames - t] * bond_history[t:]
-                    ct = jnp.mean(h0_ht) / h_avg
-                    autocorr.append(ct)
+                print(f"Calculating autocorrelation for pair {pair_idx} using FFT...")
+                n_a, n_b = bond_history.shape[1], bond_history.shape[2]
+                
+                # Perform convolution of the signal with its time-reversed self
+                conv_result = fftconvolve(bond_history, bond_history[::-1, :, :], mode='full', axes=0)
+                
+                # Extract sums for positive lags and sum over atom pairs
+                autocorr_sum_vs_lag = jnp.sum(conv_result, axis=(1, 2))[num_frames - 1 : num_frames - 1 + max_delay]
+
+                # Normalize by the number of samples at each lag
+                num_elements_at_lag_t = (num_frames - jnp.arange(max_delay)) * n_a * n_b
+                mean_product_vs_lag = autocorr_sum_vs_lag / num_elements_at_lag_t
+                autocorr = mean_product_vs_lag / h_avg
+                
                 autocorr = np.array(autocorr)
-                lifetime_fs = np.sum(autocorr) * time_step_fs
-                lifetime_ps = lifetime_fs / 1000.0
+                lifetime_ps = np.sum(autocorr) * time_step_fs / 1000.0
 
             time_axis_ps = (np.arange(max_delay) * time_step_fs) / 1000.0
             final_results[pair_idx] = {
-                "autocorrelation": autocorr.tolist(), "lifetime_ps": lifetime_ps.item(), "time_axis_ps": time_axis_ps.tolist()
+                "autocorrelation": autocorr.tolist(), "lifetime_integrated_ps": lifetime_ps.item(), "time_axis_ps": time_axis_ps.tolist()
             }
-            print(f"Pair {pair_idx} Average Lifetime: {lifetime_ps:.3f} ps")
+            print(f"Pair {pair_idx} Average Lifetime (Integrated): {lifetime_ps:.3f} ps")
 
         self.results = final_results
-        self._plot_results(final_results)
+        self._plot_results(self.results)
