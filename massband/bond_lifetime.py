@@ -7,10 +7,20 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import zntrack
+from rdkit import Chem
 from tqdm import tqdm
 
 from massband.dataloader import TimeBatchedLoader
 from massband.rdf.utils import select_atoms_flat_unique, visualize_selected_molecules
+
+
+def _get_molecule_ids(mol: Chem.Mol) -> np.ndarray:
+    """Creates an array mapping each atom index to a molecule ID."""
+    mol_ids = np.zeros(mol.GetNumAtoms(), dtype=int)
+    # GetMolFrags returns a tuple of tuples, e.g., ((0, 1, 2), (3, 4, 5))
+    for mol_id, atom_indices in enumerate(Chem.GetMolFrags(mol, asMols=False)):
+        mol_ids[list(atom_indices)] = mol_id
+    return mol_ids
 
 
 def _compute_vectors_pbc(pos_a, pos_b, cell):
@@ -28,6 +38,8 @@ def _compute_bond_matrix(
     cell: jnp.ndarray,
     indices_a: jnp.ndarray,
     indices_b: jnp.ndarray,
+    mol_ids_a: jnp.ndarray,
+    mol_ids_b: jnp.ndarray,
     distance_cutoff: float,
     exclude_self: bool,
 ) -> jnp.ndarray:
@@ -39,26 +51,28 @@ def _compute_bond_matrix(
         cell: Simulation cell matrix. (3, 3)
         indices_a: Indices of atoms in the first group. (n_atoms_a,)
         indices_b: Indices of atoms in the second group. (n_atoms_b,)
+        mol_ids_a: Molecule IDs for each atom in group A.
+        mol_ids_b: Molecule IDs for each atom in group B.
         distance_cutoff: Max distance between atoms to be considered bonded.
-        exclude_self: If True, diagonal elements are ignored (for A-A pairs).
+        exclude_self: If True, all intramolecular pairs are ignored.
     """
-    pos_a = positions[indices_a]
-    pos_b = positions[indices_b]
-
-    pos_a_exp = pos_a[:, jnp.newaxis, :]
-    pos_b_exp = pos_b[jnp.newaxis, :, :]
+    pos_a, pos_b = positions[indices_a], positions[indices_b]
+    pos_a_exp, pos_b_exp = pos_a[:, jnp.newaxis, :], pos_b[jnp.newaxis, :, :]
 
     vec_ab = _compute_vectors_pbc(pos_a_exp, pos_b_exp, cell)
     dist_ab = jnp.linalg.norm(vec_ab, axis=-1)
 
-    # ## FIX: Replace the Python 'if' with 'jax.lax.cond' ##
+    # Create a mask to identify pairs of atoms from the same molecule.
+    # This will be True if atom_i and atom_j are in the same molecule.
+    intramolecular_mask = (mol_ids_a[:, jnp.newaxis] == mol_ids_b[jnp.newaxis, :])
+
+    # Use jax.lax.cond to apply the mask only when exclude_self is True.
     dist_ab = jax.lax.cond(
         exclude_self,
-        # Function to run if exclude_self is True
-        lambda d: d.at[jnp.arange(d.shape[0]), jnp.arange(d.shape[0])].set(jnp.inf),
-        # Function to run if exclude_self is False
+        # If True, set distances for all intramolecular pairs to infinity.
+        lambda d: jnp.where(intramolecular_mask, jnp.inf, d),
+        # If False, do nothing to the distances.
         lambda d: d,
-        # The operand to pass to the function
         dist_ab
     )
 
@@ -112,39 +126,45 @@ class SubstructureBondLifetime(zntrack.Node):
         )
         time_step_fs = self.timestep * self.sampling_rate
 
-        print("Step 1: Selecting atoms based on SMARTS patterns...")
-        all_pair_indices_with_flags = []
+        print("Step 1: Selecting atoms and preparing molecule IDs...")
+        # Create a map from atom index to molecule ID for the whole system
+        molecule_ids = _get_molecule_ids(dl.first_frame_chem)
+        
+        all_pair_data = []
         for pair_idx, ((smarts1, smarts2), (h1, h2)) in enumerate(zip(self.pairs, self.hydrogens)):
             indices1 = select_atoms_flat_unique(dl.first_frame_chem, smarts1, hydrogens=h1)
             indices2 = select_atoms_flat_unique(dl.first_frame_chem, smarts2, hydrogens=h2)
             
+            # Get the molecule IDs corresponding to the selected atoms
+            mol_ids1 = molecule_ids[indices1]
+            mol_ids2 = molecule_ids[indices2]
+            
             exclude_self = smarts1 == smarts2
             if exclude_self:
-                print(f"Pair {pair_idx}: Found {len(indices1)} atoms. Self-interaction will be excluded.")
+                print(f"Pair {pair_idx}: Found {len(indices1)} atoms. All intramolecular interactions will be excluded.")
             else:
                 print(f"Pair {pair_idx}: Found {len(indices1)} atoms for group 1 and {len(indices2)} for group 2.")
             
-            all_pair_indices_with_flags.append((jnp.array(indices1), jnp.array(indices2), exclude_self))
+            all_pair_data.append(
+                (jnp.array(indices1), jnp.array(indices2), jnp.array(mol_ids1), jnp.array(mol_ids2), exclude_self)
+            )
 
         print(f"\nStep 2: Processing {dl.total_frames} frames to identify bonds...")
         all_bond_matrices = []
         pbar = tqdm(dl, total=dl.total_frames, desc="Identifying bonds")
         
-        # ## FIX: Iterate through batches from the data loader ##
         for batch in pbar:
             positions_batch, cell_batch = jnp.array(batch["position"]), jnp.array(batch["cell"])
             
-            # ## FIX: Loop over each frame within the batch ##
             for i in range(positions_batch.shape[0]):
                 positions_frame = positions_batch[i]
-                # Assume cell is the same for the whole batch, or index if it changes per frame
                 cell_frame = cell_batch[i] if cell_batch.ndim == 4 else cell_batch
 
                 frame_bonds = []
-                for indices1, indices2, exclude_self in all_pair_indices_with_flags:
-                    # Now we pass a single frame to the JIT'd function
+                for indices1, indices2, mol_ids1, mol_ids2, exclude_self in all_pair_data:
                     bond_matrix = _compute_bond_matrix(
-                        positions_frame, cell_frame, indices1, indices2, self.distance_cutoff, exclude_self
+                        positions_frame, cell_frame, indices1, indices2, mol_ids1, mol_ids2, 
+                        self.distance_cutoff, exclude_self
                     )
                     frame_bonds.append(bond_matrix)
                 all_bond_matrices.append(frame_bonds)
