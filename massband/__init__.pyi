@@ -7,6 +7,7 @@ from .diffusion import KinisiSelfDiffusion
 from .pmf import PotentialOfMeanForce
 from .radius_of_gyration import RadiusOfGyration
 from .rdf import RadialDistributionFunction, SubstructureRadialDistributionFunction
+from .bond_lifetime import SubstructureBondLifetime
 
 __all__ = [
     "RadialDistributionFunction",
@@ -17,4 +18,5 @@ __all__ = [
     "NernstEinsteinIonicConductivity",
     "KinisiEinsteinHelfandIonicConductivity",
     "SubstructureRadialDistributionFunction",
+    "SubstructureBondLifetime"
 ]
