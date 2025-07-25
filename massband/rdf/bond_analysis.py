@@ -1,21 +1,15 @@
 from pathlib import Path
 from typing import Literal
 
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import zntrack
-
 from tqdm import tqdm
 
 from massband.dataloader import TimeBatchedLoader
 
-from .utils import select_atoms_flat_unique, visualize_selected_molecules
-
-from typing import Literal
-
-import jax.numpy as jnp
-
-from .utils import compute_rdf
+from .utils import compute_rdf, select_atoms_flat_unique, visualize_selected_molecules
 
 
 class SubstructureRadialDistributionFunction(zntrack.Node):

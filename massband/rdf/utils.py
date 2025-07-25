@@ -1,11 +1,10 @@
 import itertools
-from functools import partial
 import typing as tp
+from functools import partial
 
 import jax.numpy as jnp
 from ase.data import atomic_numbers
 from jax import jit, vmap
-
 from rdkit import Chem
 from rdkit.Chem import Draw, rdchem
 
