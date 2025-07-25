@@ -1,3 +1,4 @@
+import typing as tp
 from pathlib import Path
 
 import jax
@@ -58,6 +59,9 @@ def _compute_bond_matrix(
     return dist_ab < distance_cutoff
 
 
+T_H_OPT = tp.Literal["include", "exclude", "isolated"]
+
+
 class SubstructureBondLifetime(zntrack.Node):
     """Calculate bond lifetimes for selected substructure pairs."""
 
@@ -65,7 +69,7 @@ class SubstructureBondLifetime(zntrack.Node):
     file: Path = zntrack.deps_path()
     structures: list[str] = zntrack.params(default_factory=list)
     pairs: list[tuple[str, str]] = zntrack.params(default_factory=list)
-    hydrogens: list[tuple[...]] = zntrack.params(default_factory=list)
+    hydrogens: list[tuple[T_H_OPT, T_H_OPT]] = zntrack.params(default_factory=list)
     distance_cutoff: float = zntrack.params(3.5)
     batch_size: int = zntrack.params(64)
     start: int = zntrack.params(0)
@@ -101,23 +105,29 @@ class SubstructureBondLifetime(zntrack.Node):
                 markersize=4,
                 label=f"Simulation Data\nτ (integrated) = {lifetime_int_ps:.2f} ps",
             )
-            ax1.set_xlabel("Time (ps)")
+            ax1.set_xlabel("Time / ps")
             ax1.set_ylabel("Bond Autocorrelation C(t)")
             ax1.set_title("Linear Scale")
             ax1.grid(True, linestyle="--", alpha=0.6)
 
             ax2.plot(time_ps, autocorr, "o", markersize=4)
-            ax2.set_xlabel("Time (ps)")
+            ax2.set_xlabel("Time / ps")
             ax2.set_ylabel("Bond Autocorrelation C(t) (log scale)")
-            ax2.set_title("Log Scale & Fit")
+            ax2.set_title("Log Scale")
             ax2.grid(True, linestyle="--", alpha=0.6)
             ax2.set_yscale("log")
 
             ax1.legend()
             fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+            safe_smarts1 = (
+                pair_smarts[0].replace("[", "").replace("]", "").replace(":", "_")
+            )
+            safe_smarts2 = (
+                pair_smarts[1].replace("[", "").replace("]", "").replace(":", "_")
+            )
             plot_path = (
                 self.figures
-                / f"lifetime_pair_{pair_idx}_{pair_smarts[0]}_{pair_smarts[1]}.png"
+                / f"lifetime_pair_{pair_idx}_{safe_smarts1}_{safe_smarts2}.png"
             )
             plt.savefig(plot_path, dpi=300)
             plt.close()
