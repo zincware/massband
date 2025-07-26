@@ -7,6 +7,7 @@ from .diffusion import KinisiSelfDiffusion
 from .pmf import PotentialOfMeanForce
 from .radius_of_gyration import RadiusOfGyration
 from .rdf import RadialDistributionFunction
+from .kirkwood_buff import KirkwoodBuffAnalysis
 
 __all__ = [
     "RadialDistributionFunction",
@@ -16,4 +17,5 @@ __all__ = [
     "RadiusOfGyration",
     "NernstEinsteinIonicConductivity",
     "KinisiEinsteinHelfandIonicConductivity",
+    "KirkwoodBuffAnalysis",
 ]
