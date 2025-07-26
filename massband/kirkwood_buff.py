@@ -6,6 +6,7 @@ import jax.scipy as jsp
 import matplotlib.pyplot as plt
 import pandas as pd
 import zntrack
+import numpy as np
 from scipy.constants import physical_constants
 
 log = logging.getLogger(__name__)
@@ -119,7 +120,7 @@ def calculate_observables(G_df: pd.DataFrame, partial_densities: dict, T: float)
         observables["dmu_drho"] = pd.DataFrame(
             jnp.array(dmu_drho), index=structures, columns=structures
         )
-    except jnp.linalg.LinAlgError:
+    except np.linalg.LinAlgError:
         log.error(
             "Singular K_matrix for chemical potential derivatives. Check densities/integrals."
         )
@@ -136,9 +137,9 @@ def calculate_observables(G_df: pd.DataFrame, partial_densities: dict, T: float)
             jnp.sum(M_inv, axis=1) / total_rho
         )  # Units: (Dimensionless) / (molecules/A^3) = A^3/molecule
         observables["partial_molar_volumes"] = pd.Series(
-            jnp.array(partial_molar_volumes), index=structures
+            np.array(partial_molar_volumes), index=structures
         )
-    except jnp.linalg.LinAlgError:
+    except np.linalg.LinAlgError:
         log.error(
             "Singular M_matrix for partial molar volumes. Check densities/integrals."
         )
@@ -180,7 +181,7 @@ def calculate_observables(G_df: pd.DataFrame, partial_densities: dict, T: float)
                 "Calculation failed: Zero density"
             )
 
-    except jnp.linalg.LinAlgError:
+    except np.linalg.LinAlgError:
         log.error(
             "Singular K_matrix for compressibility calculation. Check densities/integrals."
         )
@@ -215,9 +216,9 @@ class KirkwoodBuffAnalysis(zntrack.Node):
 
     rdf_data: dict = zntrack.deps()
     partial_densities: dict = zntrack.deps()
-    dr: float = zntrack.params()  # Angstroms
+    dr: float = zntrack.params(0.05)  # Angstroms
 
-    T: float = zntrack.params()  # Temperature in K
+    T: float = zntrack.params(300)  # Temperature in K
 
     results: dict = zntrack.metrics()
     figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
