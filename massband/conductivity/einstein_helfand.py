@@ -16,12 +16,39 @@ from massband.plotting.kinisi import PlottingConfig, plot_kinisi_results
 
 
 class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
+    """
+    Ionic conductivity calculation using Einstein-Helfand method via kinisi.
+
+    Parameters
+    ----------
+    file : str | Path
+        Path to H5MD trajectory file.
+    structures : list[str]
+        List of SMILES strings for ionic structures.
+    start_dt : float, default 10
+        Start time for conductivity analysis in picoseconds.
+    start : int, default 0
+        Starting frame index (in steps).
+    stop : int | None, optional
+        Stopping frame index (in steps).
+    step : int, default 1
+        Frame step size (in steps).
+    time_step : float, default 0.5
+        Simulation time step in femtoseconds.
+    sampling_rate : int, default 1000
+        Number of steps to skip between frames for analysis.
+    memory_limit : float, default 16
+        Memory limit in GB for kinisi processing.
+    """
     file: str | Path = zntrack.deps_path()
     structures: list[str] = zntrack.params(default_factory=list)
     start_dt: float = zntrack.params(10)  # in ps - start time for conductivity analysis
-    start: int = zntrack.params(0)  # in ps - start time for diffusion analysis
+    start: int = zntrack.params(0)  # in steps - start frame for trajectory analysis
+    stop: int | None = zntrack.params(None)  # in steps - stop frame for trajectory analysis
+    step: int = zntrack.params(1)  # in steps - frame step size for trajectory analysis
     time_step: float = zntrack.params(0.5)  # in fs - time step of the simulation
-    sampling_rate: int = zntrack.params(1000)  # in fs - sampling
+    sampling_rate: int = zntrack.params(1000)  # in steps - sampling
+    memory_limit: float = zntrack.params(16) # 16 GB
 
     results: dict = zntrack.metrics()
     data_path: Path = zntrack.outs_path(zntrack.nwd / "conductivity_data")
@@ -178,6 +205,8 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             structures=list(charge_mapping),
             wrap=False,
             start=self.start,
+            stop=self.stop,
+            step=self.step,
         )
         traj = list(tqdm(loader, desc="Loading trajectory", unit="frame"))
         volume = loader.first_frame_atoms.get_volume()
@@ -193,11 +222,16 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
 
         frames, ionic_charge = self._construct_frames(positions, charge_mapping)
 
+        # https://github.com/kinisi-dev/kinisi/issues/150
+        # Calculate effective time step: convert fs to ps and account for step size
+        effective_time_step = self.time_step / 1000 * self.step # * 2
+        
         diff = ASEParser(
             atoms=frames,
             specie="X",
-            time_step=self.time_step / 1000,
+            time_step=effective_time_step,
             step_skip=self.sampling_rate,
+            memory_limit=self.memory_limit,
         )
 
         print(f"Diffusion parameters: {ionic_charge.shape =}")

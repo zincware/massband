@@ -30,6 +30,34 @@ class DiffusionResults(TypedDict):
 
 
 class KinisiSelfDiffusion(zntrack.Node):
+    """
+    Self-diffusion coefficient calculation using kinisi library.
+
+    Parameters
+    ----------
+    file : Union[str, Path]
+        Path to H5MD trajectory file.
+    sampling_rate : int
+        Number of steps to skip between frames for analysis.
+    time_step : float
+        Simulation time step in femtoseconds.
+    structures : Optional[list[str]], optional
+        List of SMILES strings for molecular structures to analyze.
+    start_dt : float, default 50
+        Start time for diffusion analysis in picoseconds.
+    seed : int, default 42
+        Random seed for bootstrap sampling.
+    batch_size : int, default 64
+        Batch size for trajectory processing.
+    start : int, default 0
+        Starting frame index (in steps).
+    stop : Optional[int], optional
+        Stopping frame index (in steps).
+    step : int, default 1
+        Frame step size (in steps).
+    memory_limit : float, default 16
+        Memory limit in GB for kinisi processing.
+    """
     file: Union[str, Path] = zntrack.deps_path()
     sampling_rate: int = zntrack.params()
     time_step: float = zntrack.params()
@@ -41,6 +69,7 @@ class KinisiSelfDiffusion(zntrack.Node):
     start: int = zntrack.params(0)
     stop: Optional[int] = zntrack.params(None)
     step: int = zntrack.params(1)
+    memory_limit: float = zntrack.params(16)  # 16 GB
 
     data_path: Path = zntrack.outs_path(zntrack.nwd / "diffusion_data")
 
@@ -101,6 +130,7 @@ class KinisiSelfDiffusion(zntrack.Node):
                     specie="X",
                     time_step=effective_time_step,
                     step_skip=self.sampling_rate,
+                    memory_limit=self.memory_limit,
                 )
                 diff = MSDBootstrap(diff.delta_t, diff.disp_3d, diff._n_o)
                 diff.diffusion(start_dt=self.start_dt)

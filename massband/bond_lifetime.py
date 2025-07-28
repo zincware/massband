@@ -11,7 +11,7 @@ from rdkit import Chem
 from tqdm import tqdm
 
 from massband.dataloader import TimeBatchedLoader
-from massband.rdf.utils import select_atoms_flat_unique
+from massband.rdf.utils import select_atoms_flat_unique, visualize_selected_molecules
 
 
 def _get_molecule_ids(mol: Chem.Mol) -> np.ndarray:
@@ -135,6 +135,7 @@ class SubstructureBondLifetime(zntrack.Node):
 
     def run(self):
         """Main execution method for the node."""
+        self.figures.mkdir(parents=True, exist_ok=True)
         dl = TimeBatchedLoader(
             file=self.file,
             batch_size=self.batch_size,
@@ -189,6 +190,20 @@ class SubstructureBondLifetime(zntrack.Node):
                     exclude_self,
                 )
             )
+            
+            # Create structure visualization for this pair
+            img = visualize_selected_molecules(dl.first_frame_chem, indices1, indices2)
+            if img is not None:
+                # Create safe filename from SMARTS patterns
+                safe_smarts1 = smarts1.replace("[", "").replace("]", "").replace(":", "_")
+                safe_smarts2 = smarts2.replace("[", "").replace("]", "").replace(":", "_")
+                path = self.figures / f"{safe_smarts1}_{safe_smarts2}.png"
+                idx = 0
+                while path.exists():
+                    path = self.figures / f"{safe_smarts1}_{safe_smarts2}_{idx}.png"
+                    idx += 1
+                img.save(path)
+                print(f"Saved structure visualization for pair {pair_idx}: {path}")
 
         ## --------------------------------------------------------------------
         ## Step 2: Process trajectory to identify bonds in each frame
