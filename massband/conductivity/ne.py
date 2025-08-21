@@ -92,7 +92,9 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
             for kind in charged_species:
                 data = species_data[kind]
                 # Sample from diffusion coefficient distribution
-                D_sample = data["D_samples"][i] * ureg.centimeter**2 / ureg.second
+                # kinisi actually outputs in Å²/ps, need to convert to cm²/s
+                # 1 Å²/ps = 1e-4 cm²/s (since 1 Å = 1e-8 cm, so 1 Å² = 1e-16 cm², 1 ps = 1e-12 s)
+                D_sample = data["D_samples"][i] * ureg.angstrom**2 / ureg.picosecond
                 charge = data["charge"]
                 n_ions = data["n_ions"]
 
@@ -100,7 +102,7 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
                 contribution = D_sample * (charge**2) * n_ions
                 sample_sum += contribution
 
-            sigma_sample = (prefactor * sample_sum).to("S/m")
+            sigma_sample = (prefactor * sample_sum).to("mS/cm")
             conductivity_samples.append(sigma_sample.magnitude)
 
         conductivity_samples = np.array(conductivity_samples)
@@ -116,10 +118,10 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
         uncertainty_high = sigma_ci68[1] - sigma_mean
 
         print(
-            f"Nernst-Einstein ionic conductivity: {sigma_mean:.3e} ± {sigma_std:.3e} S/m"
+            f"Nernst-Einstein ionic conductivity: {sigma_mean:.3e} ± {sigma_std:.3e} mS/cm"
         )
-        print(f"68% CI: [{sigma_ci68[0]:.3e}, {sigma_ci68[1]:.3e}] S/m")
-        print(f"95% CI: [{sigma_ci95[0]:.3e}, {sigma_ci95[1]:.3e}] S/m")
+        print(f"68% CI: [{sigma_ci68[0]:.3e}, {sigma_ci68[1]:.3e}] mS/cm")
+        print(f"95% CI: [{sigma_ci95[0]:.3e}, {sigma_ci95[1]:.3e}] mS/cm")
 
         # Store comprehensive results
         self.metrics = {
