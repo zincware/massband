@@ -190,7 +190,7 @@ class SubstructureBondLifetime(zntrack.Node):
                     exclude_self,
                 )
             )
-            
+
             # Create structure visualization for this pair
             img = visualize_selected_molecules(dl.first_frame_chem, indices1, indices2)
             if img is not None:

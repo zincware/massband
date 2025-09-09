@@ -7,9 +7,9 @@ import subprocess
 import ase.io
 import pytest
 import rdkit2ase
+import zntrack
 
 import massband
-import zntrack
 
 DATA_DIR = pathlib.Path(__file__).parent.parent / "data"
 
@@ -39,6 +39,7 @@ def project(tmp_path: pathlib.Path):
     finally:
         # Teardown: Go back to the original directory
         os.chdir(original_cwd)
+
 
 @pytest.fixture
 def ec_emc_smiles() -> list[str]:

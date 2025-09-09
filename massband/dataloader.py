@@ -317,7 +317,7 @@ class TimeBatchedLoader:
     ...     batch_size=100,
     ...     structures=["C1COC(=O)O1", "CCOC(=O)OC"],
     ...     com=False,
-    ...     wrap=True
+    ...     wrap=True,
     ... )
     >>> for output in loader:
     ...     batch_data = output["position"]
@@ -333,8 +333,8 @@ class TimeBatchedLoader:
     ...     file=ec_emc,
     ...     batch_size=50,
     ...     structures=None,  # Process by element
-    ...     com=False,        # Don't calculate COM
-    ...     wrap=False
+    ...     com=False,  # Don't calculate COM
+    ...     wrap=False,
     ... )
     >>> for output in loader:
     ...     batch_data = output["position"]
@@ -632,7 +632,7 @@ class SpeciesBatchedLoader:
     ...     batch_size=100,  # Max 100 atoms per batch
     ...     structures=["C1COC(=O)O1", "CCOC(=O)OC"],
     ...     com=False,
-    ...     wrap=True
+    ...     wrap=True,
     ... )
     >>> for output in loader:
     ...     batch_data = output["position"]
@@ -648,10 +648,10 @@ class SpeciesBatchedLoader:
 
     >>> loader = SpeciesBatchedLoader(
     ...     file=ec_emc,
-    ...     batch_size=50,   # Max 50 atoms per batch
-    ...     structures=None, # Process by element
-    ...     com=False,       # Individual atom coordinates
-    ...     wrap=False
+    ...     batch_size=50,  # Max 50 atoms per batch
+    ...     structures=None,  # Process by element
+    ...     com=False,  # Individual atom coordinates
+    ...     wrap=False,
     ... )
     >>> for output in loader:  # doctest: +ELLIPSIS
     ...     batch_data = output["position"]

@@ -40,15 +40,18 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     memory_limit : float, default 16
         Memory limit in GB for kinisi processing.
     """
+
     file: str | Path = zntrack.deps_path()
     structures: list[str] = zntrack.params(default_factory=list)
     start_dt: float = zntrack.params(10)  # in ps - start time for conductivity analysis
     start: int = zntrack.params(0)  # in steps - start frame for trajectory analysis
-    stop: int | None = zntrack.params(None)  # in steps - stop frame for trajectory analysis
+    stop: int | None = zntrack.params(
+        None
+    )  # in steps - stop frame for trajectory analysis
     step: int = zntrack.params(1)  # in steps - frame step size for trajectory analysis
     time_step: float = zntrack.params(0.5)  # in fs - time step of the simulation
     sampling_rate: int = zntrack.params(1000)  # in steps - sampling
-    memory_limit: float = zntrack.params(16) # 16 GB
+    memory_limit: float = zntrack.params(16)  # 16 GB
 
     results: dict = zntrack.metrics()
     data_path: Path = zntrack.outs_path(zntrack.nwd / "conductivity_data")
@@ -224,8 +227,8 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
 
         # https://github.com/kinisi-dev/kinisi/issues/150
         # Calculate effective time step: convert fs to ps and account for step size
-        effective_time_step = self.time_step / 1000 * self.step # * 2
-        
+        effective_time_step = self.time_step / 1000 * self.step  # * 2
+
         diff = ASEParser(
             atoms=frames,
             specie="X",

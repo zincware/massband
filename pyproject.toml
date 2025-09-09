@@ -46,3 +46,6 @@ select = ["F", "C", "I"] #, "ANN"]
 
 [tool.pytest.ini_options]
 addopts = "--doctest-modules"
+
+[tool.ruff.format]
+docstring-code-format = true

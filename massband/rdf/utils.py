@@ -30,7 +30,7 @@ def generate_sorted_pairs(structure_names):
 
     Examples
     --------
-    >>> structure_names = ['H', 'O', 'H2O', 'C']
+    >>> structure_names = ["H", "O", "H2O", "C"]
     >>> generate_sorted_pairs(structure_names)
     [('H', 'H'), ('H', 'C'), ('H', 'O'), ('C', 'C'), ('C', 'O'), ('O', 'O'), ('H', 'H2O'), ('C', 'H2O'), ('O', 'H2O'), ('H2O', 'H2O')]
     """

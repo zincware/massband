@@ -9,6 +9,7 @@ import zntrack
 from tqdm import tqdm
 
 from massband.abc import ComparisonResults
+
 # from massband.com import identify_substructures, load_unwrapped_frames
 # from massband.diffusion.utils import compute_msd_fft
 from massband.rotation.utils import (
