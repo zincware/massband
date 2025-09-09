@@ -61,9 +61,10 @@ class KinisiSelfDiffusion(zntrack.Node):
     Examples
     --------
     >>> with project:
-    ...     diff = massband.KinisiSelfDiffusion(file=bmim_bf4_vectra, time_step=0.5, sampling_rate=1000)
-    >>> project.build()
-
+    ...     diff = massband.KinisiSelfDiffusion(file=ec_emc, time_step=0.5, sampling_rate=1000, structures=["C1COC(=O)O1", "CCOC(=O)OC"], start_dt=5000)
+    >>> project.repro()
+    >>> diff.results["C1COC(=O)O1"].keys()
+    dict_keys(['diffusion_coefficient', 'std', 'credible_interval_68', 'credible_interval_95', 'asymmetric_uncertainty', 'occurrences'])
 
     """
     file: Union[str, Path] = zntrack.deps_path()

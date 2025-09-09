@@ -313,9 +313,9 @@ class TimeBatchedLoader:
     Load a trajectory and process in batches of 100 frames:
 
     >>> loader = TimeBatchedLoader(
-    ...     file=bmim_bf4_vectra,
+    ...     file=ec_emc,
     ...     batch_size=100,
-    ...     structures=None,  # Process by element
+    ...     structures=["C1COC(=O)O1", "CCOC(=O)OC"],
     ...     com=False,
     ...     wrap=True
     ... )
@@ -323,14 +323,14 @@ class TimeBatchedLoader:
     ...     batch_data = output["position"]
     ...     cell = output["cell"]
     ...     inv_cell = output["inv_cell"]
-    ...     _ = batch_data["C"]  # Carbon atoms
-    ...     _ = batch_data["N"]  # Nitrogen atoms
+    ...     _ = batch_data["C1COC(=O)O1"]
+    ...     _ = batch_data["CCOC(=O)OC"]
     ...     break  # Just process first batch for example
 
     Process only atomic elements (no molecular grouping):
 
     >>> loader = TimeBatchedLoader(
-    ...     file=bmim_bf4_vectra,
+    ...     file=ec_emc,
     ...     batch_size=50,
     ...     structures=None,  # Process by element
     ...     com=False,        # Don't calculate COM
@@ -628,9 +628,9 @@ class SpeciesBatchedLoader:
     Process molecular species in batches with atom count limit:
 
     >>> loader = SpeciesBatchedLoader(
-    ...     file=bmim_bf4_vectra,
+    ...     file=ec_emc,
     ...     batch_size=100,  # Max 100 atoms per batch
-    ...     structures=None,  # Process by element
+    ...     structures=["C1COC(=O)O1", "CCOC(=O)OC"],
     ...     com=False,
     ...     wrap=True
     ... )
@@ -647,7 +647,7 @@ class SpeciesBatchedLoader:
     Process by atomic elements with full trajectory for each batch:
 
     >>> loader = SpeciesBatchedLoader(
-    ...     file=bmim_bf4_vectra,
+    ...     file=ec_emc,
     ...     batch_size=50,   # Max 50 atoms per batch
     ...     structures=None, # Process by element
     ...     com=False,       # Individual atom coordinates
