@@ -43,3 +43,6 @@ line-length = 90
 
 [tool.ruff.lint]
 select = ["F", "C", "I"] #, "ANN"]
+
+[tool.pytest.ini_options]
+addopts = "--doctest-modules"

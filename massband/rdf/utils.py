@@ -32,7 +32,7 @@ def generate_sorted_pairs(structure_names):
     --------
     >>> structure_names = ['H', 'O', 'H2O', 'C']
     >>> generate_sorted_pairs(structure_names)
-    [('C', 'H'), ('C', 'O'), ('H', 'O'), ('H', 'H2O'), ('O', 'H2O'), ('H2O', 'H2O')]
+    [('H', 'H'), ('H', 'C'), ('H', 'O'), ('C', 'C'), ('C', 'O'), ('O', 'O'), ('H', 'H2O'), ('C', 'H2O'), ('O', 'H2O'), ('H2O', 'H2O')]
     """
 
     def is_element(name):

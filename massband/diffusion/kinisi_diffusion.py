@@ -57,6 +57,14 @@ class KinisiSelfDiffusion(zntrack.Node):
         Frame step size (in steps).
     memory_limit : float, default 16
         Memory limit in GB for kinisi processing.
+
+    Examples
+    --------
+    >>> with project:
+    ...     diff = massband.KinisiSelfDiffusion(file=bmim_bf4_vectra, time_step=0.5, sampling_rate=1000)
+    >>> project.build()
+
+
     """
     file: Union[str, Path] = zntrack.deps_path()
     sampling_rate: int = zntrack.params()

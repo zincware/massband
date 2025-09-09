@@ -313,35 +313,36 @@ class TimeBatchedLoader:
     Load a trajectory and process in batches of 100 frames:
 
     >>> loader = TimeBatchedLoader(
-    ...     file="trajectory.h5",
+    ...     file=bmim_bf4_vectra,
     ...     batch_size=100,
-    ...     structures=["CCO", "O"],  # ethanol and water
-    ...     com=True,
+    ...     structures=None,  # Process by element
+    ...     com=False,
     ...     wrap=True
     ... )
-    >>>
-    >>> for batch_data, cell, inv_cell in loader:
-    ...     # batch_data["CCO"] has shape (100, n_ethanol_molecules, 3)
-    ...     # batch_data["O"] has shape (100, n_water_molecules, 3)
-    ...     ethanol_positions = batch_data["CCO"]
-    ...     water_positions = batch_data["O"]
-    ...     # Process the batch...
+    >>> for output in loader:
+    ...     batch_data = output["position"]
+    ...     cell = output["cell"]
+    ...     inv_cell = output["inv_cell"]
+    ...     _ = batch_data["C"]  # Carbon atoms
+    ...     _ = batch_data["N"]  # Nitrogen atoms
+    ...     break  # Just process first batch for example
 
     Process only atomic elements (no molecular grouping):
 
     >>> loader = TimeBatchedLoader(
-    ...     file="trajectory.h5",
+    ...     file=bmim_bf4_vectra,
     ...     batch_size=50,
     ...     structures=None,  # Process by element
     ...     com=False,        # Don't calculate COM
     ...     wrap=False
     ... )
-    >>>
-    >>> for batch_data, cell, inv_cell in loader:
-    ...     # batch_data["C"] has shape (50, n_carbon_atoms, 3)
-    ...     # batch_data["O"] has shape (50, n_oxygen_atoms, 3)
+    >>> for output in loader:
+    ...     batch_data = output["position"]
+    ...     cell = output["cell"]
+    ...     inv_cell = output["inv_cell"]
     ...     carbon_positions = batch_data["C"]
-    ...     oxygen_positions = batch_data["O"]
+    ...     fluorine_positions = batch_data["F"]
+    ...     break  # Just process first batch for example
 
     Notes
     -----
@@ -627,33 +628,39 @@ class SpeciesBatchedLoader:
     Process molecular species in batches with atom count limit:
 
     >>> loader = SpeciesBatchedLoader(
-    ...     file="trajectory.h5",
+    ...     file=bmim_bf4_vectra,
     ...     batch_size=100,  # Max 100 atoms per batch
-    ...     structures=["CCO", "O"],  # ethanol and water
-    ...     com=True,
+    ...     structures=None,  # Process by element
+    ...     com=False,
     ...     wrap=True
     ... )
-    >>>
-    >>> for batch_data, cell, inv_cell in loader:
+    >>> for output in loader:
+    ...     batch_data = output["position"]
+    ...     cell = output["cell"]
+    ...     inv_cell = output["inv_cell"]
     ...     for species, positions in batch_data.items():
-    ...         # positions has shape (n_frames, n_molecules_in_batch, 3)
-    ...         print(f"{species}: {positions.shape}")
-    ...         # Process all temporal data for this species batch...
+    ...         # positions has shape (n_frames, n_atoms_in_batch, 3)
+    ...         _ = positions.shape  # Process all temporal data for this species batch
+    ...         break
+    ...     break  # Just process first batch for example
 
     Process by atomic elements with full trajectory for each batch:
 
     >>> loader = SpeciesBatchedLoader(
-    ...     file="trajectory.h5",
+    ...     file=bmim_bf4_vectra,
     ...     batch_size=50,   # Max 50 atoms per batch
     ...     structures=None, # Process by element
     ...     com=False,       # Individual atom coordinates
     ...     wrap=False
     ... )
-    >>>
-    >>> for batch_data, cell, inv_cell in loader:
+    >>> for output in loader:  # doctest: +ELLIPSIS
+    ...     batch_data = output["position"]
+    ...     cell = output["cell"]
+    ...     inv_cell = output["inv_cell"]
     ...     for element, positions in batch_data.items():
     ...         # positions has shape (n_frames, n_atoms_in_batch, 3)
-    ...         print(f"{element}: {positions.shape}")
+    ...         pass  # Process each element batch
+    ...     break  # Just process first batch for example
 
     Notes
     -----
