@@ -5,6 +5,7 @@ from kinisi.arrhenius import Arrhenius
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+import pandas as pd
 
 
 class KinisiArrhenius(zntrack.Node):
@@ -23,6 +24,12 @@ class KinisiArrhenius(zntrack.Node):
         Lower and upper bounds for activation energy prior in eV.
     pre_exponential_factor_bound : tuple[float, float]
         Lower and upper bounds for pre-exponential factor prior.
+    reference : str | Path | None, default=None
+        Path to CSV file containing reference diffusion data. First row should contain
+        'temperature' followed by species names, subsequent rows contain temperature
+        values and corresponding diffusion coefficients.
+    reference_units : str, default="cm^2/s"
+        Units of the reference diffusion coefficients for unit conversion.
 
     Attributes
     ----------
@@ -51,6 +58,8 @@ class KinisiArrhenius(zntrack.Node):
     figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
     activation_energy_bound: tuple[float, float] = zntrack.params()
     pre_exponential_factor_bound: tuple[float, float] = zntrack.params()
+    reference: str | Path | None = zntrack.deps_path()
+    reference_units: str = zntrack.params("cm^2/s")
 
     activation_energy: dict[str, float] = zntrack.metrics()
     pre_exponential_factor: dict[str, float] = zntrack.metrics()
@@ -116,6 +125,37 @@ class KinisiArrhenius(zntrack.Node):
             # Create Arrhenius plot for this structure
             self._plot_arrhenius(td, s, structure)
 
+    def _load_reference_data(self) -> dict[str, dict[str, float]] | None:
+        """Load reference data from CSV file if provided."""
+        if self.reference is None:
+            return None
+        df = pd.read_csv(self.reference)
+
+        temp_col = df.columns[0]  # First column should be temperature
+        species_cols = df.columns[1:]  # Remaining columns are species
+        
+        reference_data = {}
+        for species in species_cols:
+            reference_data[species] = {
+                "temperatures": df[temp_col].values,
+                "diffusion": df[species].values
+            }
+        
+        reference_unit = sc.Unit(self.reference_units)
+        target_unit_sc = sc.Unit("cm^2/s") # hardcoded for now
+        
+        converted_data = {}
+        for species, data in reference_data.items():
+            ref_values = sc.array(dims=["temperature"], values=data["diffusion"], unit=reference_unit)
+            converted_values = sc.to_unit(ref_values, target_unit_sc)
+            
+            converted_data[species] = {
+                "temperatures": data["temperatures"],
+                "diffusion": converted_values.values
+            }
+            
+        return converted_data
+
     def _plot_arrhenius(self, td, s, structure: str) -> None:
         """Create Arrhenius plot with credible intervals and legend."""
         credible_intervals = [[16, 84], [2.5, 97.5], [0.15, 99.85]]
@@ -123,8 +163,7 @@ class KinisiArrhenius(zntrack.Node):
         sigmas = [1, 2, 3]
 
         fig, ax = plt.subplots(figsize=(8, 6))
-        
-        # Plot calculated diffusion coefficients
+
         ax.errorbar(
             1000 / td.coords["temperature"].values,
             td.data.values,
@@ -136,6 +175,19 @@ class KinisiArrhenius(zntrack.Node):
             label="Diff. Coef.",
             capsize=3,
         )
+
+        reference_data = self._load_reference_data()
+        if reference_data is not None and structure in reference_data:
+            ref_data = reference_data[structure]
+            ax.scatter(
+                1000 / ref_data["temperatures"],
+                ref_data["diffusion"],
+                marker="x",
+                color="orangered",
+                zorder=9,
+                label="Ref. Data",
+                s=50,
+            )
 
         # Plot credible intervals
         for i, (ci, sigma) in enumerate(zip(credible_intervals, sigmas)):
@@ -173,4 +225,3 @@ class KinisiArrhenius(zntrack.Node):
             dpi=300,
             bbox_inches="tight"
         )
-        plt.close(fig)
