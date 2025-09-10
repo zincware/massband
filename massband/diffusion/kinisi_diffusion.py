@@ -16,7 +16,43 @@ log = logging.getLogger(__name__)
 
 
 class KinisiSelfDiffusion(zntrack.Node):
-    """
+    """Compute self-diffusion coefficients using the kinisi library.
+
+    Analyzes molecular dynamics trajectories to calculate self-diffusion coefficients
+    and mean squared displacements for specified molecular structures.
+
+    Parameters
+    ----------
+    file : Union[str, Path]
+        Path to the trajectory file in h5md format.
+    structures : list[str] | None
+        List of SMILES strings representing molecular structures to analyze.
+        If None, analyzes all atomic species individually.
+    start : int, default=0
+        Starting frame index for trajectory analysis.
+    stop : int | None, default=None
+        Ending frame index. If None, uses all frames.
+    step : int, default=1
+        Frame step size for trajectory subsampling.
+    time_step : float
+        Simulation time step in femtoseconds.
+    sampling_rate : int
+        Number of simulation steps between saved trajectory frames.
+    dt : tuple[float, float, float] | None, default=None
+        Time interval parameters (start, stop, step) in femtoseconds.
+        If None, uses kinisi defaults.
+    start_dt : float
+        Minimum time interval for diffusion coefficient fitting in femtoseconds.
+
+    Attributes
+    ----------
+    data_path : Path
+        Output directory for data files.
+    figures_path : Path
+        Output directory for plots.
+    diffusion : dict[str, float]
+        Dictionary containing diffusion coefficients and standard deviations
+        for each analyzed structure.
 
     Examples
     --------
@@ -33,6 +69,9 @@ class KinisiSelfDiffusion(zntrack.Node):
     >>> diff.diffusion["[Li+]"].keys()
     dict_keys(['D', 'std'])
 
+    References
+    ----------
+    .. [1] https://kinisi.readthedocs.io/en/stable/
     """
 
     file: Union[str, Path] = zntrack.deps_path()
