@@ -67,7 +67,7 @@ class KinisiSelfDiffusion(zntrack.Node):
     ...     )
     >>> project.repro()
     >>> diff.diffusion["[Li+]"].keys()
-    dict_keys(['D', 'std'])
+    dict_keys(['mean', 'std', 'var'])
 
     References
     ----------
@@ -260,6 +260,7 @@ class KinisiSelfDiffusion(zntrack.Node):
             self._plot(diff, structure)
 
             self.diffusion[structure] = {
-                "D": float(sc.mean(diff.D).value),
+                "mean": float(sc.mean(diff.D).value),
                 "std": float(sc.std(diff.D, ddof=1).value),
+                "var": float(sc.var(diff.D, ddof=1).value),
             }
