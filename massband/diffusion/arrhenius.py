@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 
-class KinisiArrhenius(zntrack.Node):
+class KinisiDiffusionArrhenius(zntrack.Node):
     """Perform Arrhenius analysis on diffusion coefficients from multiple temperatures.
 
     Analyzes temperature-dependent diffusion coefficients to extract activation energies

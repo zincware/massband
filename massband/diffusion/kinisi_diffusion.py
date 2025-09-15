@@ -11,8 +11,26 @@ import scipy.stats as st
 import znh5md
 import zntrack
 from kinisi.analyze import DiffusionAnalyzer
+import typing as t
+import os
+import h5py
+import contextlib
 
 log = logging.getLogger(__name__)
+
+
+
+def make_hdf5_file_opener(
+    self, path: str | Path | os.PathLike
+) -> t.Callable[[], t.ContextManager[h5py.File]]:
+    """Create a context manager to open an HDF5 file using the node file system."""
+
+    @contextlib.contextmanager
+    def _opener() -> t.Generator[h5py.File, None, None]:
+        with self.state.fs.open(path, "rb") as f:
+            yield h5py.File(f, "r")
+
+    return _opener
 
 
 class KinisiSelfDiffusion(zntrack.Node):
@@ -50,9 +68,13 @@ class KinisiSelfDiffusion(zntrack.Node):
         Output directory for data files.
     figures_path : Path
         Output directory for plots.
-    diffusion : dict[str, float]
-        Dictionary containing diffusion coefficients and standard deviations
-        for each analyzed structure.
+    diffusion : dict[str, dict]
+        Dictionary containing diffusion coefficient statistics and occurrences
+        for each analyzed structure. Each entry contains:
+        - mean: mean diffusion coefficient
+        - std: standard deviation
+        - var: variance
+        - occurrences: number of molecules/ions of this type
 
     Examples
     --------
@@ -133,6 +155,7 @@ class KinisiSelfDiffusion(zntrack.Node):
             self.data_path / f"{structure}_distributions.npy",
             diff.distributions,
         )
+
 
     def _plot(self, diff: DiffusionAnalyzer, structure: str) -> None:
         d_mean = sc.mean(diff.D).value
@@ -263,4 +286,12 @@ class KinisiSelfDiffusion(zntrack.Node):
                 "mean": float(sc.mean(diff.D).value),
                 "std": float(sc.std(diff.D, ddof=1).value),
                 "var": float(sc.var(diff.D, ddof=1).value),
+                "occurrences": len(molecules[structure]),
             }
+
+
+    @property
+    def frames(self) -> znh5md.IO:
+        """Return trajectory frames as a list of ASE Atoms objects."""
+        file_factory = make_hdf5_file_opener(self, self.file)
+        return znh5md.IO(file_factory=file_factory)

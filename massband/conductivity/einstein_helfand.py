@@ -11,10 +11,10 @@ import scipy.stats as st
 import znh5md
 import zntrack
 from kinisi.analyze import ConductivityAnalyzer
+from kinisi import Species
 from rdkit import Chem
 
 log = logging.getLogger(__name__)
-
 
 
 class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
@@ -119,10 +119,111 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             else:
                 raise ValueError(f"Invalid SMILES string: {structure}")
 
-        print("Charge mapping:", charge_mapping)
         return charge_mapping
-
 
     def run(self):
         self.data_path.mkdir(exist_ok=True, parents=True)
         self.figures_path.mkdir(exist_ok=True, parents=True)
+        io = znh5md.IO(self.file, include=["position", "box"])
+        frames = io[self.start : self.stop : self.step]
+
+        graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
+        molecules: dict[str, tuple[tuple[int, ...]]] = {}
+        masses: dict[str, list[int]] = {}
+        charge: dict[str, int] = {}
+
+        species = []
+
+        for structure in self.structures:
+            matches = rdkit2ase.match_substructure(
+                rdkit2ase.networkx2ase(graph), smiles=structure
+            )
+            if not matches:
+                raise ValueError(f"No matches found for structure: {structure}")
+            molecules[structure] = matches
+            masses[structure] = list(frames[0].get_masses()[list(matches[0])])
+            mol = Chem.MolFromSmiles(structure)
+            if mol is not None:
+                charge[structure] = Chem.GetFormalCharge(mol)
+
+            species.append(
+                Species(
+                    indices=[list(x) for x in matches],
+                    masses=list(frames[0].get_masses()[list(matches[0])]),
+                    charge=Chem.GetFormalCharge(mol),
+                )
+            )
+
+        params = {
+            "specie": species,
+            "time_step": self.time_step * sc.Unit("fs"),
+            "step_skip": self.sampling_rate * self.step * sc.Unit("dimensionless"),
+            "progress": True,
+        }
+        if self.dt is not None:
+            params["dt"] = sc.arange(
+                dim="time interval",
+                start=self.dt[0] * sc.Unit("fs"),
+                stop=self.dt[1] * sc.Unit("fs"),
+                step=self.dt[2] * sc.Unit("fs"),
+            )
+
+        cond = ConductivityAnalyzer.from_ase(
+            trajectory=frames,
+            **params,
+        )
+        start_dt = self.start_dt * sc.Unit("fs")
+        cond.conductivity(
+            start_dt=start_dt,
+            temperature=self.temperature * sc.Unit("K"),
+        )
+
+        credible_intervals = [[16, 84], [2.5, 97.5], [0.15, 99.85]]
+        alpha = [0.6, 0.4, 0.2]
+
+        fig, ax = plt.subplots()
+        ax.plot(cond.dt.values, cond.mscd.values, "k-")
+        for i, ci in enumerate(credible_intervals):
+            ax.fill_between(
+                cond.dt.values,
+                *np.percentile(cond.distributions, ci, axis=1),
+                alpha=alpha[i],
+                color="#0173B2",
+                lw=0,
+            )
+        ax.axvline(
+            start_dt.value,
+            c="k",
+            ls="--",
+            label=f"start_dt = {start_dt.value} {start_dt.unit}",
+        )
+
+        ax.set_xlabel(f"Time / {cond.dt.unit}")
+        ax.set_ylabel(f"mscd / {cond.mscd.unit}")
+
+        fig.savefig(self.figures_path / "mscd.png", dpi=300, bbox_inches="tight")
+
+        fig, ax = plt.subplots()
+
+        new_sigma = sc.to_unit(cond.sigma, "S/cm")
+
+        ax.hist(new_sigma.values, density=True)
+        ax.axvline(sc.mean(new_sigma).value, c="k")
+        ax.set_xlabel(f"D* / [{new_sigma.unit}]")
+        ax.set_ylabel(f"p(D*) / [{(1 / new_sigma.unit).unit}]")
+        fig.savefig(
+            self.figures_path / "sigma_distribution.png", dpi=300, bbox_inches="tight"
+        )
+        self.conductivity = {
+            "mean": float(sc.mean(new_sigma).value),
+            "std": float(sc.std(new_sigma, ddof=1).value),
+            "var": float(sc.var(new_sigma, ddof=1).value),
+        }
+
+
+        cond.mscd.save_hdf5(self.data_path / f"{structure}_msd.h5")
+        cond.dt.save_hdf5(self.data_path / f"{structure}_dt.h5")
+        np.save(
+            self.data_path / f"{structure}_distributions.npy",
+            cond.distributions,
+        )

@@ -1,7 +1,7 @@
 [project]
 name = "massband"
 version = "0.1.1"
-description = "Add your description here"
+description = "Molecular dynamics post-processing and analysis package"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -46,6 +46,9 @@ select = ["F", "C", "I"] #, "ANN"]
 
 [tool.pytest.ini_options]
 addopts = "--doctest-modules"
+
+[tool.uv.sources]
+kinisi = { git = "https://github.com/PythonFZ/kinisi", rev = "multi-species-update" }
 
 [tool.ruff.format]
 docstring-code-format = true

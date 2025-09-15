@@ -1,5 +1,6 @@
 from .bond_lifetime import SubstructureBondLifetime
 from .conductivity import (
+    KinisiConductivityArrhenius,
     KinisiEinsteinHelfandIonicConductivity,
     NernstEinsteinIonicConductivity,
 )
@@ -9,7 +10,7 @@ from .dataloader import (
     SpeciesBatchedLoader,
     TimeBatchedLoader,
 )
-from .diffusion import KinisiSelfDiffusion, KinisiArrhenius
+from .diffusion import KinisiSelfDiffusion, KinisiDiffusionArrhenius
 from .pmf import PotentialOfMeanForce
 from .radius_of_gyration import RadiusOfGyration
 from .rdf import RadialDistributionFunction, SubstructureRadialDistributionFunction
@@ -19,7 +20,8 @@ __all__ = [
     "CoordinationNumber",
     "PotentialOfMeanForce",
     "KinisiSelfDiffusion",
-    "KinisiArrhenius",
+    "KinisiDiffusionArrhenius",
+    "KinisiConductivityArrhenius",
     "RadiusOfGyration",
     "NernstEinsteinIonicConductivity",
     "KinisiEinsteinHelfandIonicConductivity",
