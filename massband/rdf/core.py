@@ -250,7 +250,42 @@ def _calculate_pbc_aware_com_for_frame(
 
 class RadialDistributionFunction(zntrack.Node):
     """
-    Calculates the Radial Distribution Function (RDF) for pairs of species in a trajectory.
+    Calculate radial distribution functions (RDFs) for molecular dynamics trajectories.
+
+    Computes g(r) for atom-atom or center-of-mass pairs with proper periodic boundary
+    condition handling and finite-size corrections.
+
+    Parameters
+    ----------
+    file : str or Path
+        Path to trajectory file in H5MD format.
+    structures : list of str or None, default None
+        SMILES strings for molecular structures. If provided, computes COM-COM RDFs.
+        If None, computes atom-atom RDFs grouped by element.
+    bin_width : float, default 0.05
+        Width of distance bins in Angstrom.
+    start : int, default 0
+        Starting frame index.
+    stop : int or None, default None
+        Ending frame index. If None, processes all frames.
+    step : int, default 1
+        Frame sampling interval.
+    batch_size : int, default 4
+        Number of frames to process in each batch for memory management.
+
+    Attributes
+    ----------
+    rdf : dict
+        Dictionary containing RDF data for each pair with keys:
+        - 'bin_centers': List of bin center positions
+        - 'g_r': List of RDF values
+        - 'unit': Distance unit string
+        - 'number_density_a': Number density of species A
+        - 'number_density_b': Number density of species B
+    figures_path : Path
+        Directory containing RDF plots.
+    data_path : Path
+        Directory containing RDF data files.
     """
 
     file: str | Path = zntrack.deps_path()
@@ -259,7 +294,7 @@ class RadialDistributionFunction(zntrack.Node):
     start: int = zntrack.params(0)
     stop: int | None = zntrack.params(None)
     step: int = zntrack.params(1)
-    batch_size: int = zntrack.params(4)  # Add batch size for memory management
+    batch_size: int = zntrack.params(4)
 
     rdf: dict[str, RDFData] = zntrack.outs()
     figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
