@@ -1,11 +1,13 @@
-from massband.diffusion.kinisi_diffusion import KinisiSelfDiffusion
-import zntrack
-import scipp as sc
-from kinisi.arrhenius import Arrhenius
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
-from pathlib import Path
 import pandas as pd
+import scipp as sc
+import zntrack
+from kinisi.arrhenius import Arrhenius
+
+from massband.diffusion.kinisi_diffusion import KinisiSelfDiffusion
 
 
 class KinisiDiffusionArrhenius(zntrack.Node):
@@ -53,6 +55,7 @@ class KinisiDiffusionArrhenius(zntrack.Node):
     >>> arrhenius.activation_energy["[Li+]"]["mean"]
     0.45
     """
+
     diff: list[KinisiSelfDiffusion] = zntrack.deps()
     temperatures: list[float] = zntrack.params()
     figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
@@ -73,7 +76,7 @@ class KinisiDiffusionArrhenius(zntrack.Node):
         all_structures = set()
         for diff_node in self.diff:
             all_structures.update(diff_node.diffusion.keys())
-        
+
         # Process each structure separately
         for structure in all_structures:
             # Extract diffusion data for this structure across all temperatures
@@ -111,7 +114,7 @@ class KinisiDiffusionArrhenius(zntrack.Node):
                 ],
             )
             s.mcmc()
-            
+
             # Store results
             self.activation_energy[structure] = {
                 "mean": sc.mean(s.activation_energy).value,
@@ -133,27 +136,29 @@ class KinisiDiffusionArrhenius(zntrack.Node):
 
         temp_col = df.columns[0]  # First column should be temperature
         species_cols = df.columns[1:]  # Remaining columns are species
-        
+
         reference_data = {}
         for species in species_cols:
             reference_data[species] = {
                 "temperatures": df[temp_col].values,
-                "diffusion": df[species].values
+                "diffusion": df[species].values,
             }
-        
+
         reference_unit = sc.Unit(self.reference_units)
-        target_unit_sc = sc.Unit("cm^2/s") # hardcoded for now
-        
+        target_unit_sc = sc.Unit("cm^2/s")  # hardcoded for now
+
         converted_data = {}
         for species, data in reference_data.items():
-            ref_values = sc.array(dims=["temperature"], values=data["diffusion"], unit=reference_unit)
+            ref_values = sc.array(
+                dims=["temperature"], values=data["diffusion"], unit=reference_unit
+            )
             converted_values = sc.to_unit(ref_values, target_unit_sc)
-            
+
             converted_data[species] = {
                 "temperatures": data["temperatures"],
-                "diffusion": converted_values.values
+                "diffusion": converted_values.values,
             }
-            
+
         return converted_data
 
     def _plot_arrhenius(self, td, s, structure: str) -> None:
@@ -199,29 +204,28 @@ class KinisiDiffusionArrhenius(zntrack.Node):
                 lw=0,
                 label=f"±{sigma}σ interval",
             )
-        
+
         # Format plot
         ax.set_yscale("log")
         ax.set_xlabel(r"$1000T^{-1}$ / K$^{-1}$")
         ax.set_ylabel(r"$D$ / cm$^2$s$^{-1}$")
-        
+
         # Add activation energy to lower left
         ea_mean = self.activation_energy[structure]["mean"]
         ea_std = self.activation_energy[structure]["std"]
         ax.text(
-            0.05, 0.05,
+            0.05,
+            0.05,
             f"$E_a$ = {ea_mean:.3f} ± {ea_std:.3f} eV",
             transform=ax.transAxes,
             verticalalignment="bottom",
             bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
         )
-        
+
         ax.legend()
         ax.set_title(f"Arrhenius Analysis: {structure}")
-        
+
         # Save figure
         fig.savefig(
-            self.figures_path / f"arrhenius_{structure}.png",
-            dpi=300,
-            bbox_inches="tight"
+            self.figures_path / f"arrhenius_{structure}.png", dpi=300, bbox_inches="tight"
         )

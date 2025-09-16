@@ -10,7 +10,7 @@ from .dataloader import (
     SpeciesBatchedLoader,
     TimeBatchedLoader,
 )
-from .diffusion import KinisiSelfDiffusion, KinisiDiffusionArrhenius
+from .diffusion import KinisiDiffusionArrhenius, KinisiSelfDiffusion
 from .pmf import PotentialOfMeanForce
 from .radius_of_gyration import RadiusOfGyration
 from .rdf import RadialDistributionFunction, SubstructureRadialDistributionFunction

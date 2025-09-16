@@ -1,12 +1,14 @@
-from massband.conductivity.einstein_helfand import KinisiEinsteinHelfandIonicConductivity
-from massband.conductivity.ne import NernstEinsteinIonicConductivity
-import zntrack
-import scipp as sc
-from kinisi.arrhenius import Arrhenius
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
-from pathlib import Path
 import pandas as pd
+import scipp as sc
+import zntrack
+from kinisi.arrhenius import Arrhenius
+
+from massband.conductivity.einstein_helfand import KinisiEinsteinHelfandIonicConductivity
+from massband.conductivity.ne import NernstEinsteinIonicConductivity
 
 
 class KinisiConductivityArrhenius(zntrack.Node):
@@ -25,7 +27,7 @@ class KinisiConductivityArrhenius(zntrack.Node):
         Path to CSV file containing reference conductivity data. First row should contain
         'temperature' followed by analysis names, subsequent rows contain temperature
         values and corresponding conductivity coefficients.
-    reference_units : str, default="S/cm"
+    reference_units : str, default="S/m"
         Units of the reference conductivity coefficients for unit conversion.
 
     Attributes
@@ -41,10 +43,13 @@ class KinisiConductivityArrhenius(zntrack.Node):
     ...     )
     >>> project.repro()
     """
-    conductivity: list[KinisiEinsteinHelfandIonicConductivity | NernstEinsteinIonicConductivity] = zntrack.deps()
+
+    conductivity: list[
+        KinisiEinsteinHelfandIonicConductivity | NernstEinsteinIonicConductivity
+    ] = zntrack.deps()
     figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
     reference: str | Path | None = zntrack.deps_path()
-    reference_units: str = zntrack.params("S/cm")
+    reference_units: str = zntrack.params("S/m")
 
     def run(self):
         self.figures_path.mkdir(parents=True, exist_ok=True)
@@ -61,7 +66,7 @@ class KinisiConductivityArrhenius(zntrack.Node):
                 dims=["temperature"],
                 values=sigma["mean"],
                 variances=sigma["var"],
-                unit=sc.Unit("S/cm"),
+                unit=sc.Unit("S/m"),
             ),
             coords={
                 "temperature": sc.Variable(
@@ -87,18 +92,22 @@ class KinisiConductivityArrhenius(zntrack.Node):
 
         reference_data = {
             "temperatures": df[temp_col].values,
-            "conductivity": df[cond_col].values
+            "conductivity": df[cond_col].values,
         }
 
         reference_unit = sc.Unit(self.reference_units)
-        target_unit_sc = sc.Unit("S/cm")
+        target_unit_sc = sc.Unit("S/m")
 
-        ref_values = sc.array(dims=["temperature"], values=reference_data["conductivity"], unit=reference_unit)
+        ref_values = sc.array(
+            dims=["temperature"],
+            values=reference_data["conductivity"],
+            unit=reference_unit,
+        )
         converted_values = sc.to_unit(ref_values, target_unit_sc)
 
         converted_data = {
             "temperatures": reference_data["temperatures"],
-            "conductivity": converted_values.values
+            "conductivity": converted_values.values,
         }
 
         return converted_data
@@ -141,7 +150,5 @@ class KinisiConductivityArrhenius(zntrack.Node):
 
         # Save figure
         fig.savefig(
-            self.figures_path / "arrhenius_conductivity.png",
-            dpi=300,
-            bbox_inches="tight"
+            self.figures_path / "arrhenius_conductivity.png", dpi=300, bbox_inches="tight"
         )

@@ -1,8 +1,12 @@
+import contextlib
 import logging
+import os
+import typing as t
 from pathlib import Path
 from typing import Union
 
 import ase
+import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import rdkit2ase
@@ -11,13 +15,16 @@ import scipy.stats as st
 import znh5md
 import zntrack
 from kinisi.analyze import DiffusionAnalyzer
-import typing as t
-import os
-import h5py
-import contextlib
 
 log = logging.getLogger(__name__)
 
+
+class DiffusionData(t.TypedDict):
+    mean: float
+    std: float
+    var: float
+    occurrences: int
+    unit: str
 
 
 def make_hdf5_file_opener(
@@ -110,7 +117,7 @@ class KinisiSelfDiffusion(zntrack.Node):
     dt: tuple[float, float, float] | None = zntrack.params(None)
     start_dt: float = zntrack.params()  # in fs
 
-    diffusion: dict[str, float] = zntrack.metrics()
+    diffusion: dict[str, DiffusionData] = zntrack.metrics()
 
     def _compute_diffusion(
         self,
@@ -155,7 +162,6 @@ class KinisiSelfDiffusion(zntrack.Node):
             self.data_path / f"{structure}_distributions.npy",
             diff.distributions,
         )
-
 
     def _plot(self, diff: DiffusionAnalyzer, structure: str) -> None:
         d_mean = sc.mean(diff.D).value
@@ -287,8 +293,8 @@ class KinisiSelfDiffusion(zntrack.Node):
                 "std": float(sc.std(diff.D, ddof=1).value),
                 "var": float(sc.var(diff.D, ddof=1).value),
                 "occurrences": len(molecules[structure]),
+                "unit": str(diff.D.unit),
             }
-
 
     @property
     def frames(self) -> znh5md.IO:

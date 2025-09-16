@@ -2,16 +2,14 @@ import logging
 from pathlib import Path
 from typing import Union
 
-import ase
 import matplotlib.pyplot as plt
 import numpy as np
 import rdkit2ase
 import scipp as sc
-import scipy.stats as st
 import znh5md
 import zntrack
-from kinisi.analyze import ConductivityAnalyzer
 from kinisi import Species
+from kinisi.analyze import ConductivityAnalyzer
 from rdkit import Chem
 
 log = logging.getLogger(__name__)
@@ -94,32 +92,7 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     start_dt: float = zntrack.params()  # in fs
     temperature: float = zntrack.params()  # in K
 
-    conductivity: dict[str, float] = zntrack.metrics()
-
-    def _build_charge_mapping(self) -> dict[str, int]:
-        """Build charge mapping from SMILES structures.
-
-        Returns
-        -------
-        dict[str, int]
-            Dictionary mapping structure SMILES to their formal charges.
-
-        Raises
-        ------
-        ValueError
-            If any SMILES string is invalid.
-        """
-        charge_mapping = {}
-        for structure in self.structures:
-            mol = Chem.MolFromSmiles(structure)
-            if mol is not None:
-                charge = Chem.GetFormalCharge(mol)
-                if charge != 0:
-                    charge_mapping[structure] = charge
-            else:
-                raise ValueError(f"Invalid SMILES string: {structure}")
-
-        return charge_mapping
+    conductivity: dict[str, float | str] = zntrack.metrics()
 
     def run(self):
         self.data_path.mkdir(exist_ok=True, parents=True)
@@ -205,7 +178,7 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
 
         fig, ax = plt.subplots()
 
-        new_sigma = sc.to_unit(cond.sigma, "S/cm")
+        new_sigma = sc.to_unit(cond.sigma, "S/m")
 
         ax.hist(new_sigma.values, density=True)
         ax.axvline(sc.mean(new_sigma).value, c="k")
@@ -218,8 +191,8 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             "mean": float(sc.mean(new_sigma).value),
             "std": float(sc.std(new_sigma, ddof=1).value),
             "var": float(sc.var(new_sigma, ddof=1).value),
+            "unit": str(new_sigma.unit),
         }
-
 
         cond.mscd.save_hdf5(self.data_path / f"{structure}_msd.h5")
         cond.dt.save_hdf5(self.data_path / f"{structure}_dt.h5")
