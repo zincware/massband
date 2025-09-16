@@ -6,9 +6,6 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
-# Import the fitting functions and dataclass result
-from massband.rdf_fit import PeakFitResult, find_peak_window_by_gradient, fit_first_peak
-
 log = logging.getLogger(__name__)
 
 
@@ -74,77 +71,7 @@ def plot_rdf_individual(
         r = r[::downsample_factor]
         g_r = g_r[::downsample_factor]
 
-    try:
-        peak_fit: PeakFitResult = fit_first_peak(
-            r,
-            g_r,
-            fit_method=fit_method,
-            bayesian=bayesian,
-            smoothing_sigma=smoothing_sigma,
-            min_threshold=min_threshold,
-            window_scale=window_scale,
-            ci=ci,
-            n_samples=n_samples,
-        )
-    except Exception as e:
-        log.error(f"Error fitting RDF for {label_a} - {label_b}: {e}")
-        plt.close(fig)
-        return
-
     ax.plot(r, g_r, label="RDF (raw)", alpha=0.5)
-
-    # Visualize the fit window
-    try:
-        i_min, i_max = find_peak_window_by_gradient(
-            r, peak_fit.smoothed_rdf, min_threshold
-        )
-    except Exception as e:
-        log.error(f"Error finding peak window for {label_a} - {label_b}: {e}")
-        plt.close(fig)
-        return
-
-    if fit_method != "none" and peak_fit.success:
-        ax.plot(
-            r[i_min:i_max],
-            peak_fit.fit_curve[i_min:i_max],
-            color="black",
-            label=f"{fit_method} fit",
-        )
-
-        if bayesian:
-            lower_ci = np.full_like(r, np.nan)
-            upper_ci = np.full_like(r, np.nan)
-            lower_ci[i_min:i_max] = peak_fit.lower_ci
-            upper_ci[i_min:i_max] = peak_fit.upper_ci
-            ax.fill_between(
-                r,
-                lower_ci,
-                upper_ci,
-                color="gray",
-                alpha=0.3,
-                label=f"{int(ci * 100)}% CI",
-            )
-        else:
-            ax.plot(r, peak_fit.lower_ci, "k--", alpha=0.3)
-            ax.plot(r, peak_fit.upper_ci, "k--", alpha=0.3, label=f"{int(ci * 100)}% CI")
-
-        ax.axvline(
-            peak_fit.r_peak,
-            color="red",
-            linestyle=":",
-            label=f"$r_\\mathrm{{peak}}$ = {peak_fit.r_peak:.2f} ± {peak_fit.r_peak_uncertainty:.2f} Å",
-        )
-        peak_region = (
-            peak_fit.r_peak - peak_fit.r_peak_uncertainty,
-            peak_fit.r_peak + peak_fit.r_peak_uncertainty,
-        )
-        ax.axvspan(
-            peak_region[0],
-            peak_region[1],
-            color="red",
-            alpha=0.1,
-            label="Peak region",
-        )
 
     ax.set_xlabel("Distance r (Å)")
     ax.set_ylabel("g(r)")

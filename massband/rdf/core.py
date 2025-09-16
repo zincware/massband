@@ -9,7 +9,6 @@ from tqdm import tqdm
 
 from massband.abc import ComparisonResults
 from massband.dataloader import IndependentBatchedLoader, TimeBatchedLoader
-from massband.rdf_fit import FIT_METHODS
 from massband.rdf_plot import plot_rdf
 
 from .utils import compute_rdf, generate_sorted_pairs
@@ -31,7 +30,6 @@ class RadialDistributionFunction(zntrack.Node):
     step: int = zntrack.params(1)  # Step size for frame selection
 
     bayesian: bool = zntrack.params(False)  # Whether to use Bayesian fitting
-    fit_method: FIT_METHODS = zntrack.params("none")  # Method for fitting the
 
     dataloader: t.Literal["TimeBatchedLoader", "IndependentBatchedLoader"] = (
         zntrack.params("TimeBatchedLoader")
@@ -172,7 +170,6 @@ class RadialDistributionFunction(zntrack.Node):
             self.figures,
             bin_width=self.bin_width,
             bayesian=self.bayesian,
-            fit_method=self.fit_method,
         )
 
         log.info("Saving RDF results")
