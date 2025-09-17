@@ -24,4 +24,4 @@ def test_pmf_node(tmp_path, ec_emc, ec_emc_smiles):
     )
     pmf_node.run()
 
-    assert set(pmf_node.pmf_values.keys()) == set(rdf_node.results.keys())
+    assert set(pmf_node.pmf.keys()) == set(rdf_node.results.keys())
