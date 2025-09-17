@@ -148,7 +148,7 @@ class PotentialOfMeanForce(zntrack.Node):
         # Top panel: RDF
         ax1.plot(r, g_r, "b-", label="g(r)", linewidth=2)
         ax1.axhline(1.0, color="grey", ls=":", alpha=0.7, label="g(r) = 1 (No structure)")
-        ax1.set_xlabel("Distance r (Å)")
+        ax1.set_xlabel("Distance r / Å")
         ax1.set_ylabel("g(r)")
         ax1.set_title("Radial Distribution Function")
         ax1.legend()
@@ -159,7 +159,24 @@ class PotentialOfMeanForce(zntrack.Node):
         # Bottom panel: PMF
         finite_mask = np.isfinite(pmf)
         if np.any(finite_mask):
-            ax2.plot(r[finite_mask], pmf[finite_mask], "r-", linewidth=2, label="PMF")
+            # --- NEW: Plot in contiguous segments to avoid misleading lines ---
+            # Find indices of all finite PMF values
+            finite_indices = np.where(finite_mask)[0]
+            # Find where the breaks are in the indices (a jump > 1)
+            breaks = np.where(np.diff(finite_indices) != 1)[0] + 1
+            # Split the indices into segments at the break points
+            segments = np.split(finite_indices, breaks)
+            
+            # Plot each segment as a separate line
+            for segment_indices in segments:
+                if segment_indices.size > 1: # Need at least 2 points to draw a line
+                    ax2.plot(
+                        r[segment_indices],
+                        pmf[segment_indices],
+                        "r-",
+                        linewidth=2,
+                        label="PMF",
+                    )
             ax2.axhline(0.0, color="grey", ls=":", alpha=0.7, label="PMF = 0 (Reference)")
         else:
             ax2.text(
@@ -170,27 +187,25 @@ class PotentialOfMeanForce(zntrack.Node):
                 va="center",
                 transform=ax2.transAxes,
             )
-        
+
         # Set reasonable y-limits for visualization before adding shaded region
         finite_pmf = pmf[finite_mask]
         if finite_pmf.size > 0:
             pmf_min, pmf_max = np.min(finite_pmf), np.max(finite_pmf)
             # Add padding but clamp extreme values for a clear plot
-            y_min_lim = max(pmf_min - 0.5, -5.0)
-            y_max_lim = min(pmf_max + 0.5, 5.0)
+            y_min_lim = max(pmf_min - 0.1, -5.0)
+            y_max_lim = min(pmf_max + 0.1, 5.0)
             ax2.set_ylim(y_min_lim, y_max_lim)
 
-        # --- NEW: Highlight regions where PMF is cut off ---
-        # Identify where g(r) is below the threshold, indicating an
-        # effectively infinite energy barrier that has been cut.
+        # Highlight regions where PMF is cut off
         cutoff_mask = g_r < self.min_gdr_threshold
         if np.any(cutoff_mask):
             ax2.fill_between(
                 r,
                 *ax2.get_ylim(),
                 where=cutoff_mask,
-                facecolor="orange",
-                alpha=0.3,
+                facecolor="lightgray",  # Changed from orange
+                alpha=0.5,
                 label="PMF → ∞ (g(r) ≈ 0)",
                 interpolate=True,
             )
@@ -199,12 +214,12 @@ class PotentialOfMeanForce(zntrack.Node):
         ax2.set_xlabel("Distance r / Å")
         ax2.set_ylabel("PMF / eV")
         ax2.set_title(f"Potential of Mean Force (T = {self.temperature} K)")
-        
+
         # Ensure legend is not cluttered with duplicate entries
         handles, labels = ax2.get_legend_handles_labels()
         by_label = OrderedDict(zip(labels, handles))
         ax2.legend(by_label.values(), by_label.keys())
-        
+
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(left=0, right=min(np.max(r, initial=15), 15))
 
@@ -241,7 +256,7 @@ class PotentialOfMeanForce(zntrack.Node):
             # Store results correctly using the PMFResults TypedDict structure
             self.pmf[pair_key] = {
                 "r": r.tolist(),
-                "pmf": pmf_values.tolist(), # NaNs will be serialized as null
+                "pmf": pmf_values.tolist(),  # NaNs will be serialized as null
                 "unit": "eV",
             }
 
@@ -261,3 +276,4 @@ class PotentialOfMeanForce(zntrack.Node):
             )
 
         log.info("✅ PMF analysis completed.")
+
