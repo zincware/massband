@@ -48,8 +48,10 @@ class KinisiSelfDiffusion(zntrack.Node):
 
     Parameters
     ----------
-    file : Union[str, Path]
+    file : Union[str, Path] | None
         Path to the trajectory file in h5md format.
+    data: znh5md.IO | list[ase.Atoms] | None, default None
+        znh5md.IO object for trajectory data, as an alternative to 'file'.
     structures : list[str] | None
         List of SMILES strings representing molecular structures to analyze.
         If None, analyzes all atomic species individually.
@@ -103,7 +105,8 @@ class KinisiSelfDiffusion(zntrack.Node):
     .. [1] https://kinisi.readthedocs.io/en/stable/
     """
 
-    file: Union[str, Path] = zntrack.deps_path()
+    file: Union[str, Path] | None = zntrack.deps_path()
+    data: znh5md.IO | list[ase.Atoms] | None = zntrack.deps(None)
     structures: list[str] | None = zntrack.params()
     start: int = zntrack.params(0)
     stop: int | None = zntrack.params(None)
@@ -260,7 +263,18 @@ class KinisiSelfDiffusion(zntrack.Node):
         self.data_path.mkdir(parents=True, exist_ok=True)
         self.figures_path.mkdir(parents=True, exist_ok=True)
         self.diffusion = {}
-        io = znh5md.IO(self.file, include=["position", "box"])
+
+        # --- Data Loading ---
+        if self.data is not None and self.file is not None:
+            raise ValueError("Provide either 'data' or 'file', not both.")
+        elif self.file is not None:
+            io = znh5md.IO(self.file, include=["position", "box"])
+        elif self.data is not None:
+            io = self.data
+            if isinstance(io, znh5md.IO):
+                io.include = ["position", "box"]
+        else:
+            raise ValueError("Either 'file' or 'data' must be provided.")
         frames = io[self.start : self.stop : self.step]
         graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
         molecules: dict[str, tuple[tuple[int, ...]]] = {}
@@ -299,5 +313,10 @@ class KinisiSelfDiffusion(zntrack.Node):
     @property
     def frames(self) -> znh5md.IO:
         """Return trajectory frames as a list of ASE Atoms objects."""
-        file_factory = make_hdf5_file_opener(self, self.file)
-        return znh5md.IO(file_factory=file_factory)
+        if self.file is not None:
+            file_factory = make_hdf5_file_opener(self, self.file)
+            return znh5md.IO(file_factory=file_factory)
+        elif self.data is not None:
+            return self.data
+        else:
+            raise ValueError("Either 'file' or 'data' must be provided.")

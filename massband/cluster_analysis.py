@@ -2,6 +2,7 @@ import logging
 import typing as t
 from pathlib import Path
 
+import ase
 import jax.lax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -220,16 +221,18 @@ def exponential_decay(t, A, tau, C):
 class ClusterAnalysis(zntrack.Node):
     """
     Analyze cluster formation and dynamics in molecular dynamics trajectories.
-    
+
     Specialized for ionic liquid systems with comprehensive cluster statistics including
     lifetimes, size distributions, and temporal correlations. This analysis is particularly
-    relevant for understanding ion association, transport properties, and structural 
+    relevant for understanding ion association, transport properties, and structural
     heterogeneity in ionic liquids.
 
     Parameters
     ----------
-    file : str or Path
+    file : str or Path | None
         Path to trajectory file in H5MD format.
+    data: znh5md.IO | list[ase.Atoms] | None, default None
+        znh5md.IO object for trajectory data, as an alternative to 'file'.
     structures : list of str or None, default None
         SMILES strings for molecular structures. If provided, computes COM-based clustering.
         If None, computes atom-based clustering grouped by element.
@@ -261,7 +264,8 @@ class ClusterAnalysis(zntrack.Node):
         Directory containing analysis data files.
     """
 
-    file: str | Path = zntrack.deps_path()
+    file: str | Path | None = zntrack.deps_path()
+    data: znh5md.IO | list[ase.Atoms] | None = zntrack.deps(None)
     structures: list[str] | None = zntrack.params(None)
     cutoff_factor: float = zntrack.params(1.5)
     start: int = zntrack.params(0)
@@ -281,7 +285,16 @@ class ClusterAnalysis(zntrack.Node):
         self.cluster_stats = {}
 
         # --- Data Loading ---
-        io = znh5md.IO(self.file, include=["position", "box"])
+        if self.data is not None and self.file is not None:
+            raise ValueError("Provide either 'data' or 'file', not both.")
+        elif self.file is not None:
+            io = znh5md.IO(self.file, include=["position", "box"])
+        elif self.data is not None:
+            io = self.data
+            if isinstance(io, znh5md.IO):
+                io.include = ["position", "box"]
+        else:
+            raise ValueError("Either 'file' or 'data' must be provided.")
         frames = io[self.start : self.stop : self.step]
         log.info(f"Loaded {len(frames)} frames for analysis")
 

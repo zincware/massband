@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from typing import Union
 
+import ase
 import matplotlib.pyplot as plt
 import numpy as np
 import rdkit2ase
@@ -23,8 +24,10 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
 
     Parameters
     ----------
-    file : Union[str, Path]
+    file : Union[str, Path] | None
         Path to the trajectory file in h5md format.
+    data: znh5md.IO | list[ase.Atoms] | None, default None
+        znh5md.IO object for trajectory data, as an alternative to 'file'.
     structures : list[str]
         List of SMILES strings representing ionic structures in the system.
         Must include both cations and anions (e.g., ["[Li+]", "F[P-](F)(F)(F)(F)F"]).
@@ -77,7 +80,8 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     .. [1] https://kinisi.readthedocs.io/en/stable/
     """
 
-    file: Union[str, Path] = zntrack.deps_path()
+    file: Union[str, Path] | None = zntrack.deps_path()
+    data: znh5md.IO | list[ase.Atoms] | None = zntrack.deps(None)
     structures: list[str] = zntrack.params()
     start: int = zntrack.params(0)
     stop: int | None = zntrack.params(None)
@@ -97,7 +101,18 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     def run(self):
         self.data_path.mkdir(exist_ok=True, parents=True)
         self.figures_path.mkdir(exist_ok=True, parents=True)
-        io = znh5md.IO(self.file, include=["position", "box"])
+
+        # --- Data Loading ---
+        if self.data is not None and self.file is not None:
+            raise ValueError("Provide either 'data' or 'file', not both.")
+        elif self.file is not None:
+            io = znh5md.IO(self.file, include=["position", "box"])
+        elif self.data is not None:
+            io = self.data
+            if isinstance(io, znh5md.IO):
+                io.include = ["position", "box"]
+        else:
+            raise ValueError("Either 'file' or 'data' must be provided.")
         frames = io[self.start : self.stop : self.step]
 
         graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)

@@ -3,6 +3,7 @@ import logging
 import typing as t
 from functools import partial
 from pathlib import Path
+import ase
 
 import jax.lax
 import jax.numpy as jnp
@@ -257,8 +258,10 @@ class RadialDistributionFunction(zntrack.Node):
 
     Parameters
     ----------
-    file : str or Path
+    file : str | Path
         Path to trajectory file in H5MD format.
+    data: znh5md.IO | list[ase.Atoms]| None, default None
+        znh5md.IO object for trajectory data, as an alternative to 'file'.
     structures : list of str or None, default None
         SMILES strings for molecular structures. If provided, computes COM-COM RDFs.
         If None, computes atom-atom RDFs grouped by element.
@@ -288,7 +291,8 @@ class RadialDistributionFunction(zntrack.Node):
         Directory containing RDF data files.
     """
 
-    file: str | Path = zntrack.deps_path()
+    file: str | Path | None = zntrack.deps_path()
+    data: znh5md.IO | list[ase.Atoms]| None = zntrack.deps(None)
     structures: list[str] | None = zntrack.params(None)
     bin_width: float = zntrack.params(0.05)
     start: int = zntrack.params(0)
@@ -307,7 +311,16 @@ class RadialDistributionFunction(zntrack.Node):
         self.rdf = {}
 
         # --- Data Loading and Unit Setup ---
-        io = znh5md.IO(self.file, include=["position", "box"])
+        if self.data is not None and self.file is not None:
+            raise ValueError("Provide either 'data' or 'file', not both.")
+        elif self.file is not None:
+            io = znh5md.IO(self.file, include=["position", "box"])
+        elif self.data is not None:
+            io = self.data
+            if isinstance(io, znh5md.IO):
+                io.include = ["position", "box"]
+        else:
+            raise ValueError("Either 'file' or 'data' must be provided.")
         frames = io[self.start : self.stop : self.step]
         ureg = pint.UnitRegistry()
         position_unit = ureg.angstrom
