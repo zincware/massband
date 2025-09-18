@@ -52,3 +52,6 @@ kinisi = { git = "https://github.com/PythonFZ/kinisi", rev = "multi-species-upda
 
 [tool.ruff.format]
 docstring-code-format = true
+
+[project.entry-points.'zntrack.nodes']
+massband = 'massband.nodes:nodes'

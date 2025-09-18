@@ -1,9 +1,9 @@
 """Potential of Mean Force (PMF) calculation from RDF data."""
 
 import logging
-from pathlib import Path
 import typing as t
 from collections import OrderedDict
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -166,10 +166,10 @@ class PotentialOfMeanForce(zntrack.Node):
             breaks = np.where(np.diff(finite_indices) != 1)[0] + 1
             # Split the indices into segments at the break points
             segments = np.split(finite_indices, breaks)
-            
+
             # Plot each segment as a separate line
             for segment_indices in segments:
-                if segment_indices.size > 1: # Need at least 2 points to draw a line
+                if segment_indices.size > 1:  # Need at least 2 points to draw a line
                     ax2.plot(
                         r[segment_indices],
                         pmf[segment_indices],
@@ -276,4 +276,3 @@ class PotentialOfMeanForce(zntrack.Node):
             )
 
         log.info("✅ PMF analysis completed.")
-

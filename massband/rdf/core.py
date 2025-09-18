@@ -3,8 +3,8 @@ import logging
 import typing as t
 from functools import partial
 from pathlib import Path
-import ase
 
+import ase
 import jax.lax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -51,9 +51,11 @@ def generate_sorted_pairs(structure_names: list[str]) -> list[tuple[str, str]]:
         a_is_elem, b_is_elem = is_element(a), is_element(b)
 
         # Canonicalize order within the pair before determining the sort key
-        if (a_is_elem and b_is_elem and atomic_numbers[a] > atomic_numbers[b]) or \
-           (not a_is_elem and b_is_elem) or \
-           (not a_is_elem and not b_is_elem and a > b):
+        if (
+            (a_is_elem and b_is_elem and atomic_numbers[a] > atomic_numbers[b])
+            or (not a_is_elem and b_is_elem)
+            or (not a_is_elem and not b_is_elem and a > b)
+        ):
             a, b = b, a
 
         if a_is_elem and b_is_elem:
@@ -94,10 +96,10 @@ def _finite_size_corrected_shell_volume(
     shell_area = jnp.where(
         r_scaled <= 0.5,
         spherical_shell(r),
-        4 * jnp.pi * r**2 * (1 - (3/2)*r_scaled + (1/2)*r_scaled**3)
+        4 * jnp.pi * r**2 * (1 - (3 / 2) * r_scaled + (1 / 2) * r_scaled**3),
     )
     # Set volume to zero for radii where the sphere intersects the box corners
-    shell_area = jnp.where(r_scaled > jnp.sqrt(3)/2, 0.0, shell_area)
+    shell_area = jnp.where(r_scaled > jnp.sqrt(3) / 2, 0.0, shell_area)
 
     return shell_area * dr
 
@@ -141,13 +143,15 @@ def compute_rdf(
 ):
     """
     Compute the radial distribution function (RDF) g(r) for a trajectory.
-    
+
     Uses numerically stable normalization to avoid overflow issues with large datasets.
     """
     n_frames = positions_a.shape[0]
     n_a = positions_a.shape[1]
     n_b = positions_b.shape[1]
-    hist_sum = jnp.zeros(len(bin_edges) - 1, dtype=jnp.float32)  # Use float32 for accumulation
+    hist_sum = jnp.zeros(
+        len(bin_edges) - 1, dtype=jnp.float32
+    )  # Use float32 for accumulation
 
     # Process in batches to manage memory
     n_batches = (n_frames + batch_size - 1) // batch_size
@@ -163,7 +167,7 @@ def compute_rdf(
             batch_pos_a, batch_pos_b, batch_cell, exclude_self, bin_edges
         )
         hist_sum += jnp.sum(batch_histograms, axis=0).astype(jnp.float32)
-        
+
         # Update progress if callback provided
         if progress_callback:
             progress_callback(1)
@@ -172,7 +176,7 @@ def compute_rdf(
     # Instead of computing (n_pairs * n_frames) / (mean_volume * shell_volume)
     # We compute: hist / ((n_pairs / mean_volume) * n_frames * shell_volume)
     # This avoids large intermediate values
-    
+
     volume = jnp.linalg.det(cell)
     mean_volume = jnp.mean(volume)
 
@@ -191,20 +195,20 @@ def compute_rdf(
     else:
         # For different species, we have N_a * N_b pairs per frame
         pair_density = (n_a * n_b) / mean_volume
-    
+
     # Now normalize: g(r) = hist / (pair_density * n_frames * shell_volume)
     # We can safely compute this step-by-step to avoid overflow
-    
+
     # First normalize by number of frames (this reduces the magnitude)
     hist_per_frame = hist_sum / n_frames
-    
+
     # Then normalize by pair density and shell volume
     # This is equivalent to the original formula but avoids large intermediate products
     norm_factor = pair_density * shell_volume
-    
+
     # Avoid division by zero for empty bins or zero-volume shells
     g_r = jnp.where(norm_factor > 1e-9, hist_per_frame / norm_factor, 0)
-    
+
     return g_r, number_density_a, number_density_b
 
 
@@ -292,7 +296,7 @@ class RadialDistributionFunction(zntrack.Node):
     """
 
     file: str | Path | None = zntrack.deps_path()
-    data: znh5md.IO | list[ase.Atoms]| None = zntrack.deps(None)
+    data: znh5md.IO | list[ase.Atoms] | None = zntrack.deps(None)
     structures: list[str] | None = zntrack.params(None)
     bin_width: float = zntrack.params(0.05)
     start: int = zntrack.params(0)
@@ -354,7 +358,9 @@ class RadialDistributionFunction(zntrack.Node):
 
         if self.structures:
             log.info("Preprocessing: Calculating COMs for all frames...")
-            for name, mol_indices_tuples in tqdm(molecules.items(), desc="Computing COMs"):
+            for name, mol_indices_tuples in tqdm(
+                molecules.items(), desc="Computing COMs"
+            ):
                 n_molecules = len(mol_indices_tuples)
                 if n_molecules == 0:
                     continue
@@ -366,12 +372,16 @@ class RadialDistributionFunction(zntrack.Node):
                 def process_frame(frame_args):
                     frame_positions, frame_cell = frame_args
                     return _calculate_pbc_aware_com_for_frame(
-                        frame_positions, frame_cell, atom_indices, mol_masses, n_molecules, n_atoms_per_mol
+                        frame_positions,
+                        frame_cell,
+                        atom_indices,
+                        mol_masses,
+                        n_molecules,
+                        n_atoms_per_mol,
                     )
 
                 particle_positions[name] = jax.lax.map(
-                    process_frame, 
-                    (all_positions, all_cells)
+                    process_frame, (all_positions, all_cells)
                 )
         else:
             log.info("Preprocessing: Gathering atomic positions...")
@@ -382,23 +392,25 @@ class RadialDistributionFunction(zntrack.Node):
         # --- RDF Calculation Loop with Enhanced Progress Tracking ---
         structure_names = sorted(molecules.keys())
         pairs = generate_sorted_pairs(structure_names)
-        
+
         # Calculate total number of batches for all pairs
         n_frames = len(frames)
         total_batches = sum(
-            (n_frames + self.batch_size - 1) // self.batch_size 
-            for pair in pairs
+            (n_frames + self.batch_size - 1) // self.batch_size for pair in pairs
         )
-        
+
         # Create a single progress bar for all RDF calculations
         with tqdm(total=total_batches, desc="Computing RDFs", unit="batch") as pbar:
             for struct_a, struct_b in pairs:
-                if struct_a not in particle_positions or struct_b not in particle_positions:
+                if (
+                    struct_a not in particle_positions
+                    or struct_b not in particle_positions
+                ):
                     continue
 
                 pair_key = f"{struct_a}-{struct_b}"
                 pbar.set_postfix_str(f"Processing {pair_key}")
-                
+
                 pos_a = particle_positions[struct_a]
                 pos_b = particle_positions[struct_b]
 
@@ -411,7 +423,7 @@ class RadialDistributionFunction(zntrack.Node):
                 # --- RDF Calculation with progress callback ---
                 def update_progress(n):
                     pbar.update(n)
-                
+
                 g_r, num_dens_a, num_dens_b = compute_rdf(
                     pos_a,
                     pos_b,
@@ -426,8 +438,9 @@ class RadialDistributionFunction(zntrack.Node):
                 # --- Save Data and Metrics ---
                 data_file = self.data_path / f"rdf_{pair_key}.txt"
                 np.savetxt(
-                    data_file, np.vstack([bin_centers, g_r_np]).T, 
-                    header=f"r ({position_unit:~P}), g(r)"
+                    data_file,
+                    np.vstack([bin_centers, g_r_np]).T,
+                    header=f"r ({position_unit:~P}), g(r)",
                 )
 
                 self.rdf[pair_key] = {
