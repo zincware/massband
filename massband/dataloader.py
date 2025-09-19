@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import rdkit2ase
 import znh5md
 from jax import jit, lax
+from rdkit import Chem
 
 log = logging.getLogger(__name__)
 
@@ -312,35 +313,36 @@ class TimeBatchedLoader:
     Load a trajectory and process in batches of 100 frames:
 
     >>> loader = TimeBatchedLoader(
-    ...     file="trajectory.h5",
+    ...     file=ec_emc,
     ...     batch_size=100,
-    ...     structures=["CCO", "O"],  # ethanol and water
-    ...     com=True,
-    ...     wrap=True
+    ...     structures=["C1COC(=O)O1", "CCOC(=O)OC"],
+    ...     com=False,
+    ...     wrap=True,
     ... )
-    >>>
-    >>> for batch_data, cell, inv_cell in loader:
-    ...     # batch_data["CCO"] has shape (100, n_ethanol_molecules, 3)
-    ...     # batch_data["O"] has shape (100, n_water_molecules, 3)
-    ...     ethanol_positions = batch_data["CCO"]
-    ...     water_positions = batch_data["O"]
-    ...     # Process the batch...
+    >>> for output in loader:
+    ...     batch_data = output["position"]
+    ...     cell = output["cell"]
+    ...     inv_cell = output["inv_cell"]
+    ...     _ = batch_data["C1COC(=O)O1"]
+    ...     _ = batch_data["CCOC(=O)OC"]
+    ...     break  # Just process first batch for example
 
     Process only atomic elements (no molecular grouping):
 
     >>> loader = TimeBatchedLoader(
-    ...     file="trajectory.h5",
+    ...     file=ec_emc,
     ...     batch_size=50,
     ...     structures=None,  # Process by element
-    ...     com=False,        # Don't calculate COM
-    ...     wrap=False
+    ...     com=False,  # Don't calculate COM
+    ...     wrap=False,
     ... )
-    >>>
-    >>> for batch_data, cell, inv_cell in loader:
-    ...     # batch_data["C"] has shape (50, n_carbon_atoms, 3)
-    ...     # batch_data["O"] has shape (50, n_oxygen_atoms, 3)
+    >>> for output in loader:
+    ...     batch_data = output["position"]
+    ...     cell = output["cell"]
+    ...     inv_cell = output["inv_cell"]
     ...     carbon_positions = batch_data["C"]
-    ...     oxygen_positions = batch_data["O"]
+    ...     fluorine_positions = batch_data["F"]
+    ...     break  # Just process first batch for example
 
     Notes
     -----
@@ -366,10 +368,16 @@ class TimeBatchedLoader:
     properties: list[
         t.Literal["position", "velocity", "cell", "inv-cell", "masses", "indices"]
     ] = dataclasses.field(default_factory=lambda: ["position", "cell", "inv-cell"])
+    map_to_dict: bool = True
 
     def __post_init__(self):
         if not self.fixed_cell:
             raise NotImplementedError("Non-fixed cell handling is not implemented yet.")
+        if not self.map_to_dict and self.com:
+            raise ValueError(
+                "Mapping to dict with com=True is not supported. "
+                "Set map_to_dict=False or com=False."
+            )
 
         self.handler = znh5md.IO(
             self.file, variable_shape=False, include=["position", "velocity", "box"]
@@ -403,6 +411,11 @@ class TimeBatchedLoader:
 
         self.iter_offset = 0
         log.info(f"Initialized loader for {self.total_frames} frames from {self.file}")
+
+    @property
+    def first_frame_chem(self) -> Chem.Mol:
+        """Get the first frame as an RDKit molecule for substructure matching."""
+        return rdkit2ase.ase2rdkit(self.first_frame_atoms, suggestions=self.structures)
 
     def __len__(self):
         if not hasattr(self, "total_frames"):
@@ -475,31 +488,36 @@ class TimeBatchedLoader:
         output = {}
 
         if "position" in self.properties:
-            position_data = defaultdict(list)
-            for structure, all_mols in self.indices.items():
-                if not all_mols:
-                    continue
-                mol_indices_array = jnp.array(all_mols)
-                if not self.com:
-                    atom_indices = mol_indices_array.flatten()
-                    position_data[structure] = unwrapped_pos[:, atom_indices, :]
-                else:
-                    mol_positions = unwrapped_pos[:, mol_indices_array, :]
-                    masses = self.masses[mol_indices_array]
-                    total_mol_mass = jnp.sum(masses, axis=1)
-                    numerator = jnp.sum(mol_positions * masses[None, :, :, None], axis=2)
-                    com = numerator / total_mol_mass[None, :, None]
-                    position_data[structure] = com
+            if self.map_to_dict:
+                position_data = defaultdict(list)
+                for structure, all_mols in self.indices.items():
+                    if not all_mols:
+                        continue
+                    mol_indices_array = jnp.array(all_mols)
+                    if not self.com:
+                        atom_indices = mol_indices_array.flatten()
+                        position_data[structure] = unwrapped_pos[:, atom_indices, :]
+                    else:
+                        mol_positions = unwrapped_pos[:, mol_indices_array, :]
+                        masses = self.masses[mol_indices_array]
+                        total_mol_mass = jnp.sum(masses, axis=1)
+                        numerator = jnp.sum(
+                            mol_positions * masses[None, :, :, None], axis=2
+                        )
+                        com = numerator / total_mol_mass[None, :, None]
+                        position_data[structure] = com
 
-            position_results = {}
-            for structure, pos in position_data.items():
-                if self.wrap:
-                    pos = wrap_positions(
-                        pos, self.first_frame_cell, self.first_frame_inv_cell
-                    )
-                position_results[structure] = pos
-            output["position"] = position_results
-
+                position_results = {}
+                for structure, pos in position_data.items():
+                    if self.wrap:
+                        pos = wrap_positions(
+                            pos, self.first_frame_cell, self.first_frame_inv_cell
+                        )
+                    position_results[structure] = pos
+                output["position"] = position_results
+            else:
+                # If not mapping to dict, return a single array
+                output["position"] = unwrapped_pos
         if "velocity" in self.properties and batch_velocities is not None:
             velocity_data = defaultdict(list)
             for structure, all_mols in self.indices.items():
@@ -610,33 +628,39 @@ class SpeciesBatchedLoader:
     Process molecular species in batches with atom count limit:
 
     >>> loader = SpeciesBatchedLoader(
-    ...     file="trajectory.h5",
+    ...     file=ec_emc,
     ...     batch_size=100,  # Max 100 atoms per batch
-    ...     structures=["CCO", "O"],  # ethanol and water
-    ...     com=True,
-    ...     wrap=True
+    ...     structures=["C1COC(=O)O1", "CCOC(=O)OC"],
+    ...     com=False,
+    ...     wrap=True,
     ... )
-    >>>
-    >>> for batch_data, cell, inv_cell in loader:
+    >>> for output in loader:
+    ...     batch_data = output["position"]
+    ...     cell = output["cell"]
+    ...     inv_cell = output["inv_cell"]
     ...     for species, positions in batch_data.items():
-    ...         # positions has shape (n_frames, n_molecules_in_batch, 3)
-    ...         print(f"{species}: {positions.shape}")
-    ...         # Process all temporal data for this species batch...
+    ...         # positions has shape (n_frames, n_atoms_in_batch, 3)
+    ...         _ = positions.shape  # Process all temporal data for this species batch
+    ...         break
+    ...     break  # Just process first batch for example
 
     Process by atomic elements with full trajectory for each batch:
 
     >>> loader = SpeciesBatchedLoader(
-    ...     file="trajectory.h5",
-    ...     batch_size=50,   # Max 50 atoms per batch
-    ...     structures=None, # Process by element
-    ...     com=False,       # Individual atom coordinates
-    ...     wrap=False
+    ...     file=ec_emc,
+    ...     batch_size=50,  # Max 50 atoms per batch
+    ...     structures=None,  # Process by element
+    ...     com=False,  # Individual atom coordinates
+    ...     wrap=False,
     ... )
-    >>>
-    >>> for batch_data, cell, inv_cell in loader:
+    >>> for output in loader:  # doctest: +ELLIPSIS
+    ...     batch_data = output["position"]
+    ...     cell = output["cell"]
+    ...     inv_cell = output["inv_cell"]
     ...     for element, positions in batch_data.items():
     ...         # positions has shape (n_frames, n_atoms_in_batch, 3)
-    ...         print(f"{element}: {positions.shape}")
+    ...         pass  # Process each element batch
+    ...     break  # Just process first batch for example
 
     Notes
     -----

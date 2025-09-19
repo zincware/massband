@@ -1,255 +1,204 @@
+import logging
 import typing as t
-from collections import defaultdict
 from pathlib import Path
 
-import jax.numpy as jnp
+import ase
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import pint
+import rdkit2ase
+import znh5md
 import zntrack
 from scipy.signal import correlate
 from tqdm import tqdm
 
-from massband.dataloader import IndependentBatchedLoader, TimeBatchedLoader
+log = logging.getLogger(__name__)
+
+
+class ROGData(t.TypedDict):
+    """A data structure for storing Radius of Gyration statistics."""
+
+    mean: float
+    std: float
+    unit: str
 
 
 class RadiusOfGyration(zntrack.Node):
-    """Calculate the radius of gyration for molecules in a trajectory."""
+    """Calculate the radius of gyration for molecules in a trajectory.
 
-    file: str | Path = zntrack.deps_path()
+    Parameters
+    ----------
+    file : str | Path | None
+        Path to trajectory file in H5MD format.
+    data: znh5md.IO | list[ase.Atoms] | None, default None
+        znh5md.IO object for trajectory data, as an alternative to 'file'.
+    structures : list[str]
+        SMILES strings for molecular structures to analyze.
+    """
+
+    file: str | Path | None = zntrack.deps_path()
+    data: znh5md.IO | list[ase.Atoms] | None = zntrack.deps(None)
     structures: list[str] = zntrack.params(default_factory=list)
-    figures: Path = zntrack.outs_path(zntrack.nwd / "figures")
-    results: dict = zntrack.metrics()
-    data: dict = zntrack.outs()
-    dataloader: t.Literal["TimeBatchedLoader", "IndependentBatchedLoader"] = (
-        zntrack.params("TimeBatchedLoader")
-    )
+    figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
+    data_path: Path = zntrack.outs_path(zntrack.nwd / "data")
+    rog: dict[str, ROGData] = zntrack.metrics()
+
     start: int = zntrack.params(0)
     stop: int | None = zntrack.params(None)
     step: int = zntrack.params(1)
-    batch_size: int = zntrack.params(64)
+
+    sampling_rate: float | None = zntrack.params(
+        None
+    )  # Optional time between frames in fs
+    time_step: float | None = zntrack.params(None)  # Time step in fs
 
     def run(self) -> None:
-        if self.dataloader == "TimeBatchedLoader":
-            dl = TimeBatchedLoader(
-                file=self.file,
-                batch_size=self.batch_size,
-                structures=self.structures,
-                wrap=False,
-                com=False,
-                properties=["position", "masses", "indices"],
-                start=self.start,
-                stop=self.stop,
-                step=self.step,
-            )
-        elif self.dataloader == "IndependentBatchedLoader":
-            print("Using IndependentBatchedLoader for inhomogeneous structures.")
-            dl = IndependentBatchedLoader(
-                file=self.file,
-                batch_size=1,
-                structures=self.structures,
-                wrap=False,
-                com=False,
-                properties=["position", "masses", "indices"],
-                start=self.start,
-                stop=self.stop,
-                step=self.step,
-            )
+        """Main method to execute the ROG calculation."""
+        self.data_path.mkdir(parents=True, exist_ok=True)
+        self.figures_path.mkdir(parents=True, exist_ok=True)
+        self.rog = {}
+
+        # --- Data Loading ---
+        if self.data is not None and self.file is not None:
+            raise ValueError("Provide either 'data' or 'file', not both.")
+        elif self.file is not None:
+            io = znh5md.IO(self.file, include=["position", "box"])
+        elif self.data is not None:
+            io = self.data
+            if isinstance(io, znh5md.IO):
+                io.include = ["position", "box"]
         else:
-            raise ValueError(
-                f"Unsupported dataloader type: {self.dataloader}. "
-                "Use 'TimeBatchedLoader' or 'IndependentBatchedLoader'."
-            )
-        self.results = {}
-        self.data = {}
+            raise ValueError("Either 'file' or 'data' must be provided.")
+        frames = io[self.start : self.stop : self.step]
+        # --- Molecule Identification ---
+        graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
+        molecules: dict[str, tuple[tuple[int, ...]]] = {}
+        masses: dict[str, np.ndarray] = {}
 
-        results = defaultdict(list)
-
-        for batch_output in tqdm(dl, desc="Calculating Radius of Gyration"):
-            pos = batch_output["position"]
-            masses_dict = batch_output["masses"]
-            indices_dict = batch_output["indices"]
-            for key in pos:
-                # Get atom positions for all molecules, shape: (batch, n_mols, n_atoms, 3)
-                molecule_positions = pos[key]
-                # Get masses for this structure - since com=False, we get individual atom masses
-                atom_masses = masses_dict[key]  # shape: (total_atoms_for_structure,)
-
-                # Get indices for all molecules of this type to reshape masses properly
-                mol_indices = indices_dict[key]  # shape: (n_mols, n_atoms_per_mol)
-                # Reshape atom masses to match molecule structure: (n_mols, n_atoms_per_mol)
-                molecule_masses = atom_masses.reshape(mol_indices.shape)
-
-                # Reshape positions to match: (batch, n_mols, n_atoms_per_mol, 3)
-                molecule_positions = molecule_positions.reshape(
-                    -1, *molecule_masses.shape, 3
+        if not self.structures:
+            raise ValueError("No structures provided for ROG calculation.")
+        else:
+            for structure in self.structures:
+                matches = rdkit2ase.match_substructure(
+                    rdkit2ase.networkx2ase(graph), smiles=structure
                 )
-                if molecule_positions.shape[2] == 1:
-                    # molecuels with only one atom are not valid for Rg calculation
+                if not matches:
+                    log.warning(f"No matches found for structure {structure}")
                     continue
-                # raise ValueError(molecule_masses.shape, molecule_positions.shape)
+                molecules[structure] = matches
+                masses[structure] = np.array(frames[0].get_masses()[list(matches[0])])
 
-                # print(f"Processing {key} with {molecule_positions.shape} frames and {molecule_positions.shape[1]} molecules")
+        # --- ROG Calculation ---
+        for structure, mol_indices in molecules.items():
+            molecule_masses = masses[structure]
+            total_mass = np.sum(molecule_masses)
+            rog_time_series = []
 
-                # --- Vectorized Rg Calculation ---
-                # Total mass for each molecule, shape: (n_mols,)
-                total_mass_per_mol = jnp.sum(molecule_masses, axis=1)
+            # Add progress bar for processing frames
+            pbar = tqdm(frames, desc=f"Processing {structure}")
+            for frame in pbar:
+                positions = np.array(frame.get_positions())
+                box_lengths = np.diag(np.array(frame.get_cell()))
 
-                # Center of mass for each molecule in each frame
-                # Shape: (batch, n_mols, 3)
-                center_of_mass = (
-                    jnp.sum(
-                        molecule_masses[None, :, :, None] * molecule_positions, axis=2
+                rog_per_frame = []
+                for idx_tuple in mol_indices:
+                    mol_idx = np.array(idx_tuple)
+                    mol_coords = positions[mol_idx]
+
+                    # This assumes an orthorhombic box.
+                    ref_coord = mol_coords[0]
+                    displacements = mol_coords - ref_coord
+                    displacements -= box_lengths * np.round(displacements / box_lengths)
+                    unwrapped_coords = ref_coord + displacements
+
+                    # Calculate Center of Mass (COM)
+                    com = (
+                        np.sum(unwrapped_coords * molecule_masses[:, None], axis=0)
+                        / total_mass
                     )
-                    / total_mass_per_mol[None, :, None]
-                )
 
-                # Displacements from CoM, shape: (batch, n_mols, n_atoms, 3)
-                displacements = molecule_positions - center_of_mass[:, :, None, :]
+                    # Calculate Radius of Gyration
+                    r_minus_com = unwrapped_coords - com
+                    rog_sq = (
+                        np.sum(molecule_masses * np.sum(r_minus_com**2, axis=1))
+                        / total_mass
+                    )
+                    rog_per_frame.append(np.sqrt(rog_sq))
 
-                # Squared distances, shape: (batch, n_mols, n_atoms)
-                squared_distances = jnp.sum(displacements**2, axis=3)
+                rog_time_series.append(np.mean(np.array(rog_per_frame)))
 
-                # Mass-weighted sum of squared distances, shape: (batch, n_mols)
-                sum_mass_weighted_sq_dist = jnp.sum(
-                    molecule_masses[None, :, :] * squared_distances, axis=2
-                )
-
-                rg_squared = sum_mass_weighted_sq_dist / total_mass_per_mol[None, :]
-
-                # Final Rg for this batch, shape: (batch, n_mols)
-                rg = jnp.sqrt(rg_squared)
-
-                results[key].append(rg)
-
-        self.figures.mkdir(parents=True, exist_ok=True)
-
-        # --- Per-Molecule Analysis and Plotting ---
-        # This will store the mean Rg time series for global analysis
-        mean_rg_timeseries_all_types = {}
-        # This will store the number of molecules for weighted averaging
-        num_molecules_per_type = {}
-
-        for smiles, rg_values_list in results.items():
-            # 1. Aggregate results from all batches for the current molecule type
-            # Shape -> (total_frames, n_molecules_of_this_type)
-            if not rg_values_list:
-                continue
-            rg_values = jnp.concatenate(rg_values_list, axis=0)
-
-            num_molecules = rg_values.shape[1]
-            num_molecules_per_type[smiles] = num_molecules
-
-            # 2. Calculate statistics
-            # Mean and Std Dev at each frame, averaged across molecules (axis=1)
-            mean_rg_per_frame = jnp.mean(rg_values, axis=1)
-            std_rg_per_frame = jnp.std(rg_values, axis=1)
-
-            # Overall mean and std dev across all frames and all molecules
-            overall_mean_rg = jnp.mean(rg_values)
-            overall_std_rg = jnp.std(rg_values)
-
-            # Store for global analysis
-            mean_rg_timeseries_all_types[smiles] = mean_rg_per_frame
-
-            # 3. Save results and raw data
-            self.results[smiles] = {
-                "mean": float(overall_mean_rg),
-                "std": float(overall_std_rg),
-            }
-            self.data[smiles] = {
-                "rg_values": rg_values.flatten().tolist(),
-            }
-
-            # 4. Create plots
-            filename_smiles = "".join(c for c in smiles if c.isalnum())
-
-            # --- Time-series plot ---
-            plt.figure(figsize=(10, 6))
-            x_frames = jnp.arange(len(mean_rg_per_frame))
-            plt.plot(x_frames, mean_rg_per_frame, label="Mean Rg per Frame")
-            plt.fill_between(
-                x_frames,
-                mean_rg_per_frame - std_rg_per_frame,
-                mean_rg_per_frame + std_rg_per_frame,
-                alpha=0.2,
-                label="Std Dev across molecules",
+            # --- Data Processing and Saving ---
+            rog_time_series = np.array(rog_time_series)
+            df = pd.DataFrame(
+                {
+                    "Time": np.arange(len(rog_time_series))
+                    * (self.sampling_rate if self.sampling_rate else 1),
+                    "ROG": rog_time_series,
+                }
             )
-            plt.xlabel("Frame")
-            plt.ylabel("Radius of Gyration / Å")
-            plt.title(f"Radius of Gyration for {smiles}")
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.savefig(self.figures / f"rog_{filename_smiles}.png", dpi=300)
+            df.to_csv(self.data_path / f"{structure}_rog.csv", index=False)
+
+            # Save mean and std to metrics dictionary
+            mean_rog = np.mean(rog_time_series)
+            std_rog = np.std(rog_time_series)
+            self.rog[structure] = {
+                "mean": float(mean_rog),
+                "std": float(std_rog),
+                "unit": "Angstrom",
+            }
+            log.info(
+                f"Structure: {structure} | Mean ROG: {mean_rog:.3f} ± {std_rog:.3f} Angstrom"
+            )
+
+            # --- Plotting ---
+            # 1. ROG over time
+            plt.figure(figsize=(10, 6))
+            time_np = np.arange(len(rog_time_series)) * self.step
+            if self.sampling_rate and self.time_step:
+                time_step = self.time_step * pint.Quantity(self.sampling_rate, "fs")
+                time_np = time_np * time_step.magnitude
+            plt.plot(time_np, rog_time_series, label="ROG")
+            plt.xlabel(f"Lag Time / {'fs' if self.sampling_rate else 'Frames'}")
+            plt.ylabel("Radius of Gyration / Angstrom")
+            plt.title(f"ROG of {structure} over Time")
+            plt.grid(True, linestyle="--", alpha=0.6)
+            plt.tight_layout()
+            plt.savefig(self.figures_path / f"{structure}_rog_vs_time.png", dpi=300)
             plt.close()
 
-            # --- Histogram ---
-            plt.figure(figsize=(10, 6))
-            plt.hist(rg_values.flatten(), bins="auto", density=True, alpha=0.75)
-            plt.xlabel("Radius of Gyration / Å")
+            # 2. ROG distribution
+            plt.figure(figsize=(8, 6))
+            plt.hist(rog_time_series, bins=50, density=True, alpha=0.75)
+            plt.xlabel("Radius of Gyration / Angstrom")
             plt.ylabel("Probability Density")
-            plt.title(f"Rg Distribution for {smiles}")
-            plt.grid(True, alpha=0.3)
-            plt.savefig(self.figures / f"hist_rog_{filename_smiles}.png", dpi=300)
+            plt.title(f"ROG Distribution for {structure}")
+            plt.grid(True, linestyle="--", alpha=0.6)
+            plt.tight_layout()
+            plt.savefig(self.figures_path / f"{structure}_rog_distribution.png", dpi=300)
             plt.close()
 
-            # --- Autocorrelation ---
-            ac = self._autocorrelation(mean_rg_per_frame)
+            # 3. ROG autocorrelation function
+            rog_centered = rog_time_series - mean_rog
+            acf = correlate(rog_centered, rog_centered, mode="full", method="fft")
+            acf = acf[len(acf) // 2 :]
+            acf /= acf[0]
+
+            # Plot up to a reasonable lag time
+            max_lag_idx = min(
+                len(acf),
+                np.where(acf < 1 / np.e)[0][0] * 3
+                if np.any(acf < 1 / np.e)
+                else len(acf),
+            )
+
             plt.figure(figsize=(10, 6))
-            plt.plot(ac)
-            plt.xlabel("Lag (frames)")
+            plt.plot(time_np[:max_lag_idx], acf[:max_lag_idx])
+            plt.xlabel(f"Lag Time / {'fs' if self.sampling_rate else 'Frames'}")
             plt.ylabel("Autocorrelation")
-            plt.title(f"Autocorrelation of Mean Rg: {smiles}")
-            plt.axhline(0, color="grey", linestyle="--", alpha=0.5)
-            plt.grid(True, alpha=0.3)
-            plt.savefig(self.figures / f"ac_rog_{filename_smiles}.png", dpi=300)
+            plt.title(f"ROG Autocorrelation for {structure}")
+            plt.axhline(0, color="gray", linestyle="--")
+            plt.grid(True, linestyle="--", alpha=0.6)
+            plt.tight_layout()
+            plt.savefig(self.figures_path / f"{structure}_rog_acf.png", dpi=300)
             plt.close()
-
-        # --- Global Rg Analysis ---
-        if len(mean_rg_timeseries_all_types) > 1:
-            # Calculate a weighted average of the mean Rg time series
-            total_weighted_rg_sum = 0
-            total_molecules = 0
-
-            # Use the shortest trajectory length for consistent array shapes
-            min_frames = min(len(ts) for ts in mean_rg_timeseries_all_types.values())
-
-            for smiles, timeseries in mean_rg_timeseries_all_types.items():
-                num_mols = num_molecules_per_type[smiles]
-                total_weighted_rg_sum += timeseries[:min_frames] * num_mols
-                total_molecules += num_mols
-
-            global_mean_rg_per_frame = total_weighted_rg_sum / total_molecules
-
-            # Calculate overall global mean and std from all flattened data
-            all_rg_values_flat = jnp.concatenate(
-                [jnp.array(self.data[smiles]["rg_values"]) for smiles in self.data]
-            )
-            global_mean = jnp.mean(all_rg_values_flat)
-            global_std = jnp.std(all_rg_values_flat)
-
-            self.results["global"] = {
-                "mean": float(global_mean),
-                "std": float(global_std),
-            }
-
-            # Plot the global weighted-average time series
-            plt.figure(figsize=(10, 6))
-            x_frames_global = jnp.arange(len(global_mean_rg_per_frame))
-            plt.plot(
-                x_frames_global,
-                global_mean_rg_per_frame,
-                label="Global Mean RG (Weighted)",
-            )
-            plt.xlabel("Frame")
-            plt.ylabel("Radius of Gyration / Å")
-            plt.title("Global Mean Radius of Gyration (Weighted by Molecule Count)")
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.savefig(self.figures / "global_rog.png", dpi=300)
-            plt.close()
-
-    def _autocorrelation(self, x: jnp.ndarray) -> jnp.ndarray:
-        x = x - jnp.mean(x)
-        result = correlate(x, x, mode="full")
-        result = result[result.size // 2 :]
-        result = result / result[0]
-        return result

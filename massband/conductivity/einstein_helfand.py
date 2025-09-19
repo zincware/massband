@@ -1,233 +1,217 @@
-import pickle
-from collections import defaultdict
+import logging
 from pathlib import Path
+from typing import Union
 
 import ase
+import matplotlib.pyplot as plt
 import numpy as np
+import rdkit2ase
+import scipp as sc
+import znh5md
 import zntrack
-from kinisi.diffusion import MSCDBootstrap
-from kinisi.parser import ASEParser
+from kinisi import Species
+from kinisi.analyze import ConductivityAnalyzer
 from rdkit import Chem
-from tqdm import tqdm
 
-from massband.dataloader import TimeBatchedLoader
-from massband.kinisi import KinisiPlotData
-from massband.plotting.kinisi import PlottingConfig, plot_kinisi_results
+log = logging.getLogger(__name__)
 
 
 class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
-    file: str | Path = zntrack.deps_path()
-    structures: list[str] = zntrack.params(default_factory=list)
-    start_dt: float = zntrack.params(10)  # in ps - start time for conductivity analysis
-    start: int = zntrack.params(0)  # in ps - start time for diffusion analysis
-    time_step: float = zntrack.params(0.5)  # in fs - time step of the simulation
-    sampling_rate: int = zntrack.params(1000)  # in fs - sampling
+    """Compute ionic conductivity using the kinisi library.
 
-    results: dict = zntrack.metrics()
-    data_path: Path = zntrack.outs_path(zntrack.nwd / "conductivity_data")
+    Analyzes molecular dynamics trajectories to calculate system-wide ionic conductivity
+    and mean squared charge displacements for all ionic species combined.
 
-    def _build_charge_mapping(self) -> dict[str, int]:
-        """Build charge mapping from SMILES structures.
+    Parameters
+    ----------
+    file : Union[str, Path] | None
+        Path to the trajectory file in h5md format.
+    data: znh5md.IO | list[ase.Atoms] | None, default None
+        znh5md.IO object for trajectory data, as an alternative to 'file'.
+    structures : list[str]
+        List of SMILES strings representing ionic structures in the system.
+        Must include both cations and anions (e.g., ["[Li+]", "F[P-](F)(F)(F)(F)F"]).
+    start : int, default=0
+        Starting frame index for trajectory analysis.
+    stop : int | None, default=None
+        Ending frame index. If None, uses all frames.
+    step : int, default=1
+        Frame step size for trajectory subsampling.
+    time_step : float
+        Simulation time step in femtoseconds.
+    sampling_rate : int
+        Number of simulation steps between saved trajectory frames.
+    dt : tuple[float, float, float] | None, default=None
+        Time interval parameters (start, stop, step) in femtoseconds.
+        If None, uses kinisi defaults.
+    start_dt : float
+        Minimum time interval for conductivity coefficient fitting in femtoseconds.
+    temperature : float
+        System temperature in Kelvin for conductivity calculation.
 
-        Returns
-        -------
-        dict[str, int]
-            Dictionary mapping structure SMILES to their formal charges.
+    Attributes
+    ----------
+    data_path : Path
+        Output directory for data files.
+    figures_path : Path
+        Output directory for plots.
+    conductivity : dict[str, float]
+        Dictionary containing system-wide conductivity coefficient and standard deviation.
+        Keys: 'mean', 'std', 'var'.
 
-        Raises
-        ------
-        ValueError
-            If any SMILES string is invalid.
-        """
-        charge_mapping = {}
-        for structure in self.structures:
-            mol = Chem.MolFromSmiles(structure)
-            if mol is not None:
-                charge = Chem.GetFormalCharge(mol)
-                if charge != 0:
-                    charge_mapping[structure] = charge
-            else:
-                raise ValueError(f"Invalid SMILES string: {structure}")
+    Examples
+    --------
+    >>> with project:
+    ...     cond = massband.KinisiEinsteinHelfandIonicConductivity(
+    ...         file=ec_emc,
+    ...         time_step=0.5,
+    ...         sampling_rate=1000,
+    ...         structures=["[Li+]", "F[P-](F)(F)(F)(F)F"],
+    ...         start_dt=500_000,
+    ...         temperature=300.0,
+    ...         step=1000,
+    ...     )
+    >>> project.repro()
+    >>> cond.conductivity.keys()
+    dict_keys(['mean', 'std', 'var'])
 
-        print("Charge mapping:", charge_mapping)
-        return charge_mapping
+    References
+    ----------
+    .. [1] https://kinisi.readthedocs.io/en/stable/
+    """
 
-    def _construct_frames(
-        self, positions: dict, charge_mapping: dict[str, int]
-    ) -> tuple[list, np.ndarray]:
-        """Construct ASE Atoms frames from positions data.
+    file: Union[str, Path] | None = zntrack.deps_path()
+    data: znh5md.IO | list[ase.Atoms] | None = zntrack.deps(None)
+    structures: list[str] = zntrack.params()
+    start: int = zntrack.params(0)
+    stop: int | None = zntrack.params(None)
+    step: int = zntrack.params(1)
 
-        Parameters
-        ----------
-        positions : dict
-            Dictionary mapping structure names to position arrays.
-        charge_mapping : dict[str, int]
-            Dictionary mapping structure names to formal charges.
+    time_step: float = zntrack.params()  # in fs
+    sampling_rate: int = zntrack.params()  # in number of frames
 
-        Returns
-        -------
-        tuple[list, np.ndarray]
-            Tuple of (frames list, ionic_charge array).
-        """
-        length = len(next(iter(positions.values())))
+    data_path: Path = zntrack.outs_path(zntrack.nwd / "data")
+    figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
+    dt: tuple[float, float, float] | None = zntrack.params(None)
+    start_dt: float = zntrack.params()  # in fs
+    temperature: float = zntrack.params()  # in K
 
-        for key in positions:
-            print(f"Positions for {key}: {positions[key].shape}")
-
-        frames = []
-        ionic_charge = []
-        for key in charge_mapping:
-            ionic_charge.extend(positions[key].shape[1] * [charge_mapping[key]])
-        print("Ionic charges:", ionic_charge)
-
-        for frame_idx in range(length):
-            numbers = []
-            frame_positions = []
-            for specie_idx, key in enumerate(positions):
-                frame_positions.extend(positions[key][frame_idx])
-                numbers.extend([specie_idx] * len(positions[key][frame_idx]))
-
-            frame_positions = np.array(frame_positions)
-            atoms = ase.Atoms(positions=frame_positions, cell=(100000, 100000, 1000000))
-            frames.append(atoms)
-
-        return frames, np.array(ionic_charge)
-
-    def _process_results(self, bootstrap) -> None:
-        """Process conductivity results and save data.
-
-        Parameters
-        ----------
-        bootstrap : MSCDBootstrap
-            MSCDBootstrap object with conductivity results.
-        """
-        if bootstrap.sigma is not None:
-            sigma_samples = (
-                bootstrap.sigma.samples
-                if hasattr(bootstrap.sigma, "samples")
-                else bootstrap.sigma
-            )
-            sigma_mean = np.mean(sigma_samples)
-            sigma_std = np.std(sigma_samples)
-            sigma_95_ci = np.percentile(sigma_samples, [2.5, 97.5])
-
-            print("\nIonic Conductivity Results:")
-            print(f"Ionic Conductivity: {sigma_mean:.6f} \u00b1 {sigma_std:.6f} mS/cm")
-            print(
-                f"95% Confidence Interval: [{sigma_95_ci[0]:.6f}, {sigma_95_ci[1]:.6f}] mS/cm"
-            )
-
-            ci68 = np.percentile(sigma_samples, [16, 84])
-            uncertainty_low = sigma_mean - ci68[0]
-            uncertainty_high = ci68[1] - sigma_mean
-
-            self.results["system"] = {
-                "ionic_conductivity": float(sigma_mean),
-                "std": float(sigma_std),
-                "credible_interval_68": ci68.tolist(),
-                "credible_interval_95": sigma_95_ci.tolist(),
-                "asymmetric_uncertainty": [uncertainty_low, uncertainty_high],
-                "samples": sigma_samples.tolist()
-                if isinstance(sigma_samples, np.ndarray)
-                else sigma_samples,
-            }
-
-            if hasattr(bootstrap, "gradient") and hasattr(bootstrap, "intercept"):
-                gradient_samples = (
-                    bootstrap.gradient.samples
-                    if hasattr(bootstrap.gradient, "samples")
-                    else bootstrap.gradient
-                )
-                intercept_samples = (
-                    bootstrap.intercept.samples
-                    if hasattr(bootstrap.intercept, "samples")
-                    else bootstrap.intercept
-                )
-                distribution = (
-                    gradient_samples * bootstrap.dt[:, np.newaxis] + intercept_samples
-                )
-            else:
-                distribution = np.array([bootstrap.n] * len(sigma_samples)).T
-
-            plot_data = KinisiPlotData(
-                structure="system",
-                dt=np.asarray(bootstrap.dt),
-                displacement=np.asarray(bootstrap.n),
-                displacement_std=np.asarray(bootstrap.s),
-                distribution=np.asarray(distribution),
-                samples=np.asarray(sigma_samples),
-                mean_value=float(sigma_mean),
-                start_dt=self.start_dt,
-            )
-
-            with open(self.data_path / "system.pkl", "wb") as f:
-                pickle.dump(plot_data, f)
-
-            self.plot()
-        else:
-            print("\nWarning: No conductivity data available")
+    conductivity: dict[str, float | str] = zntrack.metrics()
 
     def run(self):
         self.data_path.mkdir(exist_ok=True, parents=True)
-        self.results = {}
+        self.figures_path.mkdir(exist_ok=True, parents=True)
 
-        charge_mapping = self._build_charge_mapping()
+        # --- Data Loading ---
+        if self.data is not None and self.file is not None:
+            raise ValueError("Provide either 'data' or 'file', not both.")
+        elif self.file is not None:
+            io = znh5md.IO(self.file, include=["position", "box"])
+        elif self.data is not None:
+            io = self.data
+            if isinstance(io, znh5md.IO):
+                io.include = ["position", "box"]
+        else:
+            raise ValueError("Either 'file' or 'data' must be provided.")
+        frames = io[self.start : self.stop : self.step]
 
-        loader = TimeBatchedLoader(
-            file=self.file,
-            structures=list(charge_mapping),
-            wrap=False,
-            start=self.start,
+        graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
+        molecules: dict[str, tuple[tuple[int, ...]]] = {}
+        masses: dict[str, list[int]] = {}
+        charge: dict[str, int] = {}
+
+        species = []
+
+        for structure in self.structures:
+            matches = rdkit2ase.match_substructure(
+                rdkit2ase.networkx2ase(graph), smiles=structure
+            )
+            if not matches:
+                raise ValueError(f"No matches found for structure: {structure}")
+            molecules[structure] = matches
+            masses[structure] = list(frames[0].get_masses()[list(matches[0])])
+            mol = Chem.MolFromSmiles(structure)
+            if mol is not None:
+                charge[structure] = Chem.GetFormalCharge(mol)
+
+            species.append(
+                Species(
+                    indices=[list(x) for x in matches],
+                    masses=list(frames[0].get_masses()[list(matches[0])]),
+                    charge=Chem.GetFormalCharge(mol),
+                )
+            )
+
+        params = {
+            "specie": species,
+            "time_step": self.time_step * sc.Unit("fs"),
+            "step_skip": self.sampling_rate * self.step * sc.Unit("dimensionless"),
+            "progress": True,
+        }
+        if self.dt is not None:
+            params["dt"] = sc.arange(
+                dim="time interval",
+                start=self.dt[0] * sc.Unit("fs"),
+                stop=self.dt[1] * sc.Unit("fs"),
+                step=self.dt[2] * sc.Unit("fs"),
+            )
+
+        cond = ConductivityAnalyzer.from_ase(
+            trajectory=frames,
+            **params,
         )
-        traj = list(tqdm(loader, desc="Loading trajectory", unit="frame"))
-        volume = loader.first_frame_atoms.get_volume()
+        start_dt = self.start_dt * sc.Unit("fs")
+        cond.conductivity(
+            start_dt=start_dt,
+            temperature=self.temperature * sc.Unit("K"),
+        )
 
-        positions = defaultdict(list)
-        for frame in traj:
-            for structure in charge_mapping:
-                positions[structure].append(frame["position"][structure])
+        credible_intervals = [[16, 84], [2.5, 97.5], [0.15, 99.85]]
+        alpha = [0.6, 0.4, 0.2]
 
-        positions = {
-            structure: np.concatenate(positions[structure]) for structure in positions
+        fig, ax = plt.subplots()
+        ax.plot(cond.dt.values, cond.mscd.values, "k-")
+        for i, ci in enumerate(credible_intervals):
+            ax.fill_between(
+                cond.dt.values,
+                *np.percentile(cond.distributions, ci, axis=1),
+                alpha=alpha[i],
+                color="#0173B2",
+                lw=0,
+            )
+        ax.axvline(
+            start_dt.value,
+            c="k",
+            ls="--",
+            label=f"start_dt = {start_dt.value} {start_dt.unit}",
+        )
+
+        ax.set_xlabel(f"Time / {cond.dt.unit}")
+        ax.set_ylabel(f"mscd / {cond.mscd.unit}")
+
+        fig.savefig(self.figures_path / "mscd.png", dpi=300, bbox_inches="tight")
+
+        fig, ax = plt.subplots()
+
+        new_sigma = sc.to_unit(cond.sigma, "S/m")
+
+        ax.hist(new_sigma.values, density=True)
+        ax.axvline(sc.mean(new_sigma).value, c="k")
+        ax.set_xlabel(f"D* / [{new_sigma.unit}]")
+        ax.set_ylabel(f"p(D*) / [{(1 / new_sigma.unit).unit}]")
+        fig.savefig(
+            self.figures_path / "sigma_distribution.png", dpi=300, bbox_inches="tight"
+        )
+        self.conductivity = {
+            "mean": float(sc.mean(new_sigma).value),
+            "std": float(sc.std(new_sigma, ddof=1).value),
+            "var": float(sc.var(new_sigma, ddof=1).value),
+            "unit": str(new_sigma.unit),
         }
 
-        frames, ionic_charge = self._construct_frames(positions, charge_mapping)
-
-        diff = ASEParser(
-            atoms=frames,
-            specie="X",
-            time_step=self.time_step / 1000,
-            step_skip=self.sampling_rate,
+        cond.mscd.save_hdf5(self.data_path / f"{structure}_msd.h5")
+        cond.dt.save_hdf5(self.data_path / f"{structure}_dt.h5")
+        np.save(
+            self.data_path / f"{structure}_distributions.npy",
+            cond.distributions,
         )
-
-        print(f"Diffusion parameters: {ionic_charge.shape =}")
-        bootstrap = MSCDBootstrap(diff.delta_t, diff.disp_3d, ionic_charge, diff._n_o)
-        bootstrap.conductivity(self.start_dt, 300, volume)
-
-        self._process_results(bootstrap)
-
-    def plot(self):
-        """Generate plots for ionic conductivity analysis.
-
-        Notes
-        -----
-        Creates standard kinisi plots including displacement with std,
-        credible intervals, and histogram plots for conductivity data.
-        """
-        config = PlottingConfig(
-            displacement_label="MSCD",
-            displacement_unit="\u00c5$^2$",
-            value_label="\u03c3",
-            value_unit="mS cm$^{-1}$",
-            msd_title="system Mean Squared Charge Displacement with std",
-            msd_filename="system_mscd_std.png",
-            ci_title="system MSCD credible intervals",
-            ci_filename="system_mscd_credible_intervals.png",
-            hist_title="system Ionic Conductivity Histogram",
-            hist_filename="system_conductivity_hist.png",
-            hist_label="Mean (\u03c3_n)",
-        )
-        for pkl_path in self.data_path.glob("*.pkl"):
-            with open(pkl_path, "rb") as f:
-                data = pickle.load(f)
-            plot_kinisi_results(data, self.data_path, config)

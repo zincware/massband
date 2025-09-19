@@ -1,10 +1,4 @@
-import pickle
-
-import ase
-import h5py
-import numpy as np
 import pint
-import znh5md
 import zntrack
 from rdkit import Chem
 
@@ -16,7 +10,6 @@ ureg = pint.UnitRegistry()
 class NernstEinsteinIonicConductivity(zntrack.Node):
     """Compute the ionic conductivity using the Nernst-Einstein equation.
 
-
     References
     ----------
     https://www.sciencedirect.com/science/article/pii/S2772422024000120
@@ -26,108 +19,76 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
 
     diffusion: KinisiSelfDiffusion = zntrack.deps()
     temperature: float = zntrack.params()
-    metrics: dict = zntrack.metrics()
+    conductivity: dict = zntrack.metrics()
 
     def run(self):
-        try:
-            with self.diffusion.state.fs.open(self.diffusion.file, "rb") as f:
-                with h5py.File(f) as file:
-                    atoms: ase.Atoms = znh5md.IO(file_handle=file)[0]
-        except FileNotFoundError:
-            with h5py.File(self.diffusion.file, "r") as file:
-                atoms: ase.Atoms = znh5md.IO(file_handle=file)[0]
-
+        atoms = self.diffusion.frames[0]
         volume = atoms.get_volume() * ureg.angstrom**3
 
         # e^2 / (T * kB * V)
-        prefactor = (1 * ureg.elementary_charge) ** 2 / (
-            self.temperature * ureg.kelvin * ureg.boltzmann_constant * volume
+        elementary_charge = 1 * ureg.elementary_charge
+        boltzmann_constant = 1 * ureg.boltzmann_constant
+
+        prefactor = elementary_charge**2 / (
+            self.temperature * ureg.kelvin * boltzmann_constant * volume
         )
 
-        # Load D_samples for each species for uncertainty propagation
-        species_data = {}
-        charged_species = []
+        # Collect charged species data for uncertainty propagation
+        charged_species = {}
 
-        for kind, data in self.diffusion.results.items():
+        for kind, data in self.diffusion.diffusion.items():
             mol = Chem.MolFromSmiles(kind)
+            if mol is None:
+                raise ValueError(f"Invalid SMILES string: {kind}")
+
             charge = sum(atom.GetFormalCharge() for atom in mol.GetAtoms())
             if charge == 0:
                 print(f"Skipping {kind} with no charge")
                 continue
-
-            # Load D_samples from pickle file
-            data_file = self.diffusion.data_path / f"{kind}.pkl"
-            if data_file.exists():
-                with open(data_file, "rb") as f:
-                    diffusion_plot_data = pickle.load(f)
-                D_samples = diffusion_plot_data.samples
-            else:
-                # Fallback: create samples from mean and std if pickle not available
-                D_mean = data["diffusion_coefficient"]
-                D_std = data["std"]
-                D_samples = np.random.normal(D_mean, D_std, 1000)
-                print(f"Warning: Using normal approximation for {kind} D_samples")
-
-            species_data[kind] = {
-                "D_samples": D_samples,
-                "charge": charge,
-                "n_ions": data["occurrences"],
-                "D_mean": data["diffusion_coefficient"],
-            }
-            charged_species.append(kind)
+            charged_species[kind] = (charge, data)
             print(f"Using {data['occurrences']} x {kind} with charge {charge}")
 
         if not charged_species:
             raise ValueError("No charged species found for conductivity calculation")
 
-        # Monte Carlo uncertainty propagation
-        n_samples = min(
-            [len(species_data[kind]["D_samples"]) for kind in charged_species]
+        # Calculate the mean and standard deviation using error propagation
+        contributions = []
+        variances = []
+
+        for kind, (charge, data) in charged_species.items():
+            # Use mean and std from diffusion coefficient
+            D_mean = data["mean"] * ureg(data["unit"])
+            D_std = data["std"] * ureg(data["unit"])
+            n_ions = data["occurrences"]
+
+            # Contribution to conductivity mean
+            contribution = D_mean * (charge**2) * n_ions
+            contributions.append(contribution)
+
+            # Contribution to conductivity variance (error propagation)
+            # Var(c * D) = c^2 * Var(D), where c = charge^2 * n_ions
+            c = (charge**2) * n_ions
+            contribution_variance = (c**2) * (D_std**2)
+            variances.append(contribution_variance)
+
+        # Convert to conductivity units
+        total_contribution = sum(contributions)
+        total_variance = sum(variances)
+
+        sigma = (prefactor * total_contribution).to(ureg.siemens / ureg.meter)
+        sigma_variance = (prefactor**2 * total_variance).to(
+            (ureg.siemens / ureg.meter) ** 2
         )
-        conductivity_samples = []
-
-        for i in range(n_samples):
-            sample_sum = 0 * ureg.centimeter**2 / ureg.second
-
-            for kind in charged_species:
-                data = species_data[kind]
-                # Sample from diffusion coefficient distribution
-                D_sample = data["D_samples"][i] * ureg.centimeter**2 / ureg.second
-                charge = data["charge"]
-                n_ions = data["n_ions"]
-
-                # Contribution to conductivity
-                contribution = D_sample * (charge**2) * n_ions
-                sample_sum += contribution
-
-            sigma_sample = (prefactor * sample_sum).to("S/m")
-            conductivity_samples.append(sigma_sample.magnitude)
-
-        conductivity_samples = np.array(conductivity_samples)
-
-        # Compute statistics
-        sigma_mean = np.mean(conductivity_samples)
-        sigma_std = np.std(conductivity_samples)
-        sigma_ci68 = np.percentile(conductivity_samples, [16, 84])
-        sigma_ci95 = np.percentile(conductivity_samples, [2.5, 97.5])
-
-        # Asymmetric uncertainties
-        uncertainty_low = sigma_mean - sigma_ci68[0]
-        uncertainty_high = sigma_ci68[1] - sigma_mean
+        sigma_std = sigma_variance**0.5
 
         print(
-            f"Nernst-Einstein ionic conductivity: {sigma_mean:.3e} ± {sigma_std:.3e} S/m"
+            f"Nernst-Einstein ionic conductivity: {sigma.magnitude:.3e} ± {sigma_std.magnitude:.3e} S/m"
         )
-        print(f"68% CI: [{sigma_ci68[0]:.3e}, {sigma_ci68[1]:.3e}] S/m")
-        print(f"95% CI: [{sigma_ci95[0]:.3e}, {sigma_ci95[1]:.3e}] S/m")
 
-        # Store comprehensive results
-        self.metrics = {
-            "Nernst-Einstein ionic conductivity": sigma_mean,
-            "conductivity_std": sigma_std,
-            "conductivity_ci68": sigma_ci68.tolist(),
-            "conductivity_ci95": sigma_ci95.tolist(),
-            "conductivity_asymmetric_uncertainty": [uncertainty_low, uncertainty_high],
-            "conductivity_samples": conductivity_samples.tolist(),
-            "n_monte_carlo_samples": n_samples,
+        # Store results
+        self.conductivity = {
+            "mean": sigma.magnitude,
+            "std": sigma_std.magnitude,
+            "var": sigma_variance.magnitude,
+            "unit": str(sigma.units),
         }
