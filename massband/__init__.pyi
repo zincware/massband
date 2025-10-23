@@ -11,7 +11,7 @@ from .dataloader import (
     SpeciesBatchedLoader,
     TimeBatchedLoader,
 )
-from .diffusion import KinisiDiffusionArrhenius, KinisiSelfDiffusion
+from .diffusion import KinisiDiffusionArrhenius, KinisiSelfDiffusion, KinisiYehHummer
 from .pmf import PotentialOfMeanForce
 from .radius_of_gyration import RadiusOfGyration
 from .rdf import RadialDistributionFunction, SubstructureRadialDistributionFunction
@@ -21,6 +21,7 @@ __all__ = [
     "CoordinationNumber",
     "PotentialOfMeanForce",
     "KinisiSelfDiffusion",
+    "KinisiYehHummer",
     "KinisiDiffusionArrhenius",
     "KinisiConductivityArrhenius",
     "RadiusOfGyration",

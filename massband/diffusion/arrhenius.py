@@ -7,7 +7,7 @@ import scipp as sc
 import zntrack
 from kinisi.arrhenius import Arrhenius
 
-from massband.diffusion.kinisi_diffusion import KinisiSelfDiffusion
+from massband.diffusion.kinisi_diffusion import DiffusionData
 
 
 class KinisiDiffusionArrhenius(zntrack.Node):
@@ -18,8 +18,9 @@ class KinisiDiffusionArrhenius(zntrack.Node):
 
     Parameters
     ----------
-    diff : list[KinisiSelfDiffusion]
-        List of diffusion analysis nodes at different temperatures.
+    data : list[dict[str, DiffusionData]]
+        List of diffusion data dictionaries at different temperatures.
+        Each dict maps structure names to their DiffusionData.
     temperatures : list[float]
         Corresponding temperatures in Kelvin for each diffusion analysis.
     activation_energy_bound : tuple[float, float]
@@ -45,8 +46,11 @@ class KinisiDiffusionArrhenius(zntrack.Node):
     Examples
     --------
     >>> with project:
-    ...     arrhenius = massband.KinisiArrhenius(
-    ...         diff=[diff_300K, diff_350K, diff_400K],
+    ...     diff_300K = massband.KinisiSelfDiffusion(...)
+    ...     diff_350K = massband.KinisiSelfDiffusion(...)
+    ...     diff_400K = massband.KinisiSelfDiffusion(...)
+    ...     arrhenius = massband.KinisiDiffusionArrhenius(
+    ...         data=[diff_300K.diffusion, diff_350K.diffusion, diff_400K.diffusion],
     ...         temperatures=[300, 350, 400],
     ...         activation_energy_bound=[0.1, 2.0],
     ...         pre_exponential_factor_bound=[1e-6, 1e-2],
@@ -56,7 +60,7 @@ class KinisiDiffusionArrhenius(zntrack.Node):
     0.45
     """
 
-    diff: list[KinisiSelfDiffusion] = zntrack.deps()
+    data: list[dict[str, DiffusionData]] = zntrack.deps()
     temperatures: list[float] = zntrack.params()
     figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
     activation_energy_bound: tuple[float, float] = zntrack.params()
@@ -72,17 +76,17 @@ class KinisiDiffusionArrhenius(zntrack.Node):
         self.activation_energy = {}
         self.pre_exponential_factor = {}
 
-        # Get all unique structures from all diffusion analyses
+        # Get all unique structures from all diffusion data
         all_structures = set()
-        for diff_node in self.diff:
-            all_structures.update(diff_node.diffusion.keys())
+        for data_dict in self.data:
+            all_structures.update(data_dict.keys())
 
         # Process each structure separately
         for structure in all_structures:
             # Extract diffusion data for this structure across all temperatures
             D = {
-                "mean": [x.diffusion[structure]["mean"] for x in self.diff],
-                "var": [x.diffusion[structure]["var"] for x in self.diff],
+                "mean": [data_dict[structure]["mean"] for data_dict in self.data],
+                "var": [data_dict[structure]["var"] for data_dict in self.data],
             }
 
             td = sc.DataArray(

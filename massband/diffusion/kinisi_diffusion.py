@@ -3,7 +3,6 @@ import logging
 import os
 import typing as t
 from pathlib import Path
-from typing import Union
 
 import ase
 import h5py
@@ -25,6 +24,8 @@ class DiffusionData(t.TypedDict):
     var: float
     occurrences: int
     unit: str
+    box: list[list[float]] | None
+
 
 
 def make_hdf5_file_opener(
@@ -105,8 +106,7 @@ class KinisiSelfDiffusion(zntrack.Node):
     .. [1] https://kinisi.readthedocs.io/en/stable/
     """
 
-    file: Union[str, Path] | None = zntrack.deps_path()
-    data: znh5md.IO | list[ase.Atoms] | None = zntrack.deps(None)
+    data: znh5md.IO | list[ase.Atoms] = zntrack.deps()
     structures: list[str] | None = zntrack.params()
     start: int = zntrack.params(0)
     stop: int | None = zntrack.params(None)
@@ -265,16 +265,10 @@ class KinisiSelfDiffusion(zntrack.Node):
         self.diffusion = {}
 
         # --- Data Loading ---
-        if self.data is not None and self.file is not None:
-            raise ValueError("Provide either 'data' or 'file', not both.")
-        elif self.file is not None:
-            io = znh5md.IO(self.file, include=["position", "box"])
-        elif self.data is not None:
-            io = self.data
-            if isinstance(io, znh5md.IO):
-                io.include = ["position", "box"]
-        else:
-            raise ValueError("Either 'file' or 'data' must be provided.")
+        io = self.data
+        if isinstance(io, znh5md.IO):
+            io.include = ["position", "box"]
+
         frames = io[self.start : self.stop : self.step]
         graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
         molecules: dict[str, tuple[tuple[int, ...]]] = {}
@@ -308,6 +302,7 @@ class KinisiSelfDiffusion(zntrack.Node):
                 "var": float(sc.var(diff.D, ddof=1).value),
                 "occurrences": len(molecules[structure]),
                 "unit": str(diff.D.unit),
+                "box": frames[0].cell.array.tolist(),
             }
 
     @property
