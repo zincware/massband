@@ -1,7 +1,5 @@
 """Test that conductivity classes have compatible output structures."""
 
-import numpy as np
-
 from massband.conductivity.einstein_helfand import KinisiEinsteinHelfandIonicConductivity
 from massband.conductivity.ne import NernstEinsteinIonicConductivity
 

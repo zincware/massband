@@ -1,7 +1,6 @@
 """Test PMF uncertainty propagation."""
 
 import numpy as np
-import pytest
 
 from massband.pmf import PotentialOfMeanForce
 
@@ -37,9 +36,7 @@ def test_pmf_uncertainty_propagation():
 
     # Allow for some numerical differences
     valid_mask = np.isfinite(pmf_std)
-    np.testing.assert_allclose(
-        pmf_std[valid_mask], expected_std[valid_mask], rtol=0.01
-    )
+    np.testing.assert_allclose(pmf_std[valid_mask], expected_std[valid_mask], rtol=0.01)
 
 
 def test_pmf_without_uncertainty():
@@ -92,9 +89,7 @@ def test_pmf_normalization_preserves_uncertainty():
     temperature = 300.0
 
     # Calculate PMF with uncertainty
-    pmf_values, pmf_std_before = pmf._calculate_pmf(
-        r, g_r, temperature, g_r_std=g_r_std
-    )
+    pmf_values, pmf_std_before = pmf._calculate_pmf(r, g_r, temperature, g_r_std=g_r_std)
 
     # Calculate expected uncertainty before normalization
     kT_300K = 0.0259
