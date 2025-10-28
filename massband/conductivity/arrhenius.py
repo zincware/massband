@@ -206,7 +206,9 @@ class KinisiConductivityArrhenius(zntrack.Node):
                 s=50,
             )
         elif reference_data is not None:
-            print(f"Warning: Reference data for structure '{structure}' not found in {reference_data.keys()}")
+            print(
+                f"Warning: Reference data for structure '{structure}' not found in {reference_data.keys()}"
+            )
 
         # Plot credible intervals
         for i, (ci, sigma) in enumerate(zip(credible_intervals, sigmas)):

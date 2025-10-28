@@ -15,7 +15,14 @@ import znh5md
 import zntrack
 from ase.data import atomic_numbers
 from jax import jit, vmap
-from tqdm.auto import tqdm
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +32,8 @@ class RDFData(t.TypedDict):
 
     bin_centers: list[float]
     g_r: list[float]
+    g_r_std: list[float] | None
+    g_r_ensemble: list[list[float]] | None
     unit: str
     number_density_a: float
     number_density_b: float
@@ -139,7 +148,8 @@ def compute_rdf(
     bin_edges: jnp.ndarray,
     batch_size: int = 100,
     exclude_self: bool = False,
-    progress_callback: t.Callable[[int], None] = None,
+    progress: Progress | None = None,
+    batch_task_id: int | None = None,
 ):
     """
     Compute the radial distribution function (RDF) g(r) for a trajectory.
@@ -168,9 +178,9 @@ def compute_rdf(
         )
         hist_sum += jnp.sum(batch_histograms, axis=0).astype(jnp.float32)
 
-        # Update progress if callback provided
-        if progress_callback:
-            progress_callback(1)
+        # Update progress
+        if progress is not None and batch_task_id is not None:
+            progress.update(batch_task_id, advance=1)
 
     # --- Numerically Stable Normalization ---
     # Instead of computing (n_pairs * n_frames) / (mean_volume * shell_volume)
@@ -210,6 +220,152 @@ def compute_rdf(
     g_r = jnp.where(norm_factor > 1e-9, hist_per_frame / norm_factor, 0)
 
     return g_r, number_density_a, number_density_b
+
+
+def compute_rdf_with_ensemble_uncertainty(
+    positions_a: jnp.ndarray,
+    positions_b: jnp.ndarray,
+    cell: jnp.ndarray,
+    bin_edges: jnp.ndarray,
+    energy_ensemble: jnp.ndarray,
+    temperature: float,
+    batch_size: int = 100,
+    exclude_self: bool = False,
+    progress: Progress | None = None,
+    batch_task_id: int | None = None,
+):
+    """
+    Compute RDF with uncertainty using Cumulant Expansion Approximation (CEA).
+
+    Uses the CEA method from i-pi committee reweighting to propagate ensemble
+    energy uncertainties to RDF uncertainties. This approach is related to
+    umbrella sampling reweighting methods.
+
+    References
+    ----------
+    Torrie, Glenn M., and John P. Valleau. "Nonphysical sampling distributions
+    in Monte Carlo free-energy estimation: Umbrella sampling."
+    Journal of Computational Physics 23.2 (1977): 187-199.
+    https://doi.org/10.1016/0021-9991(77)90121-8
+
+    Parameters
+    ----------
+    positions_a : jnp.ndarray
+        Positions of species A, shape (n_frames, n_particles_a, 3)
+    positions_b : jnp.ndarray
+        Positions of species B, shape (n_frames, n_particles_b, 3)
+    cell : jnp.ndarray
+        Simulation cell, shape (n_frames, 3, 3)
+    bin_edges : jnp.ndarray
+        Bin edges for histogram, shape (n_bins + 1,)
+    energy_ensemble : jnp.ndarray
+        Ensemble energies, shape (n_frames, n_models)
+    temperature : float
+        Temperature in Kelvin
+    batch_size : int
+        Number of frames to process per batch
+    exclude_self : bool
+        Whether to exclude self-interactions (for same-species RDF)
+    progress : Progress, optional
+        Rich Progress instance for tracking progress
+    batch_task_id : int, optional
+        Task ID for updating batch progress (across all models)
+
+    Returns
+    -------
+    g_r_mean : jnp.ndarray
+        Mean RDF across ensemble models
+    g_r_std : jnp.ndarray
+        Standard deviation of RDF across models
+    g_r_ensemble : jnp.ndarray
+        Per-model RDFs, shape (n_models, n_bins)
+    number_density_a : float
+        Number density of species A
+    number_density_b : float
+        Number density of species B
+    """
+    n_frames, n_models = energy_ensemble.shape
+    n_a = positions_a.shape[1]
+    n_b = positions_b.shape[1]
+
+    # Compute beta = 1/(k_B * T) in eV^-1
+    ureg = pint.UnitRegistry()
+    k_B = ureg.boltzmann_constant
+    beta = (1.0 / (k_B * temperature * ureg.kelvin)).to("1/eV").magnitude
+
+    # Compute mean energy per frame across ensemble
+    E_mean = jnp.mean(energy_ensemble, axis=1)  # (n_frames,)
+
+    # Storage for per-model RDFs
+    g_r_models = []
+
+    # Process each model in the ensemble
+    for model_idx in range(n_models):
+        E_model = energy_ensemble[:, model_idx]  # (n_frames,)
+
+        # Compute h = beta * (E_model - E_mean) for CEA
+        h = beta * (E_model - E_mean)  # (n_frames,)
+
+        # Compute per-frame histograms
+        hist_per_frame = []
+        n_batches = (n_frames + batch_size - 1) // batch_size
+
+        for i in range(n_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, n_frames)
+
+            batch_pos_a = positions_a[start_idx:end_idx]
+            batch_pos_b = positions_b[start_idx:end_idx]
+            batch_cell = cell[start_idx:end_idx]
+
+            # Vectorize histogram calculation over batch
+            batch_histograms = vmap(rdf_hist_single_frame, in_axes=(0, 0, 0, None, None))(
+                batch_pos_a, batch_pos_b, batch_cell, exclude_self, bin_edges
+            )
+            hist_per_frame.append(batch_histograms)
+
+            # Update batch progress
+            if progress is not None and batch_task_id is not None:
+                progress.update(batch_task_id, advance=1)
+
+        # Concatenate all batches
+        hist_per_frame = jnp.concatenate(hist_per_frame, axis=0).astype(jnp.float32)
+
+        # Apply CEA formula: O_CEA = <O> - <O*h> + <O>*<h>
+        O_mean = jnp.mean(hist_per_frame, axis=0)
+        Oh_mean = jnp.mean(hist_per_frame * h[:, None], axis=0)
+        h_mean = jnp.mean(h)
+
+        hist_CEA = O_mean - Oh_mean + O_mean * h_mean
+
+        # Normalize to get g(r) using same method as standard RDF
+        volume = jnp.linalg.det(cell)
+        mean_volume = jnp.mean(volume)
+
+        min_box_lengths = jnp.min(jnp.linalg.norm(cell, axis=2), axis=1)
+        shell_volume = _finite_size_corrected_shell_volume(bin_edges, L=min_box_lengths)
+
+        number_density_a = n_a / mean_volume
+        number_density_b = n_b / mean_volume
+
+        if exclude_self:
+            pair_density = (n_a * (n_a - 1)) / mean_volume
+        else:
+            pair_density = (n_a * n_b) / mean_volume
+
+        # hist_CEA is already a per-frame average from the CEA formula (via jnp.mean)
+        # Just normalize by pair density and shell volume (no division by n_frames needed)
+        norm_factor = pair_density * shell_volume
+        g_r_model = jnp.where(norm_factor > 1e-9, hist_CEA / norm_factor, 0)
+
+        g_r_models.append(g_r_model)
+
+    # Stack all models and compute statistics
+    g_r_models = jnp.stack(g_r_models, axis=0)  # (n_models, n_bins)
+    g_r_mean = jnp.mean(g_r_models, axis=0)
+    g_r_std = jnp.std(g_r_models, axis=0)
+
+    return g_r_mean, g_r_std, g_r_models, number_density_a, number_density_b
 
 
 @partial(jit, static_argnames=["n_molecules", "n_atoms_per_mol"])
@@ -277,13 +433,21 @@ class RadialDistributionFunction(zntrack.Node):
         Frame sampling interval.
     batch_size : int, default 4
         Number of frames to process in each batch for memory management.
+    uncertainties : str or None, default None
+        Name of the property containing ensemble energies (e.g., "energy_ensemble").
+        If provided, computes uncertainty-aware RDFs using the Cumulant Expansion
+        Approximation (CEA) method. Requires temperature parameter.
+    temperature : float or None, default None
+        Temperature in Kelvin. Required when uncertainties is set.
 
     Attributes
     ----------
     rdf : dict
         Dictionary containing RDF data for each pair with keys:
         - 'bin_centers': List of bin center positions
-        - 'g_r': List of RDF values
+        - 'g_r': List of mean RDF values
+        - 'g_r_std': List of standard deviations (if uncertainties enabled)
+        - 'g_r_ensemble': List of per-model RDF values (if uncertainties enabled)
         - 'unit': Distance unit string
         - 'number_density_a': Number density of species A
         - 'number_density_b': Number density of species B
@@ -300,6 +464,8 @@ class RadialDistributionFunction(zntrack.Node):
     stop: int | None = zntrack.params(None)
     step: int = zntrack.params(1)
     batch_size: int = zntrack.params(4)
+    uncertainties: str | None = zntrack.params(None)
+    temperature: float | None = zntrack.params(None)
 
     rdf: dict[str, RDFData] = zntrack.outs()
     figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
@@ -311,14 +477,60 @@ class RadialDistributionFunction(zntrack.Node):
         self.figures_path.mkdir(parents=True, exist_ok=True)
         self.rdf = {}
 
+        # --- Uncertainty Setup ---
+        use_uncertainty = self.uncertainties is not None
+        if use_uncertainty:
+            if self.temperature is None:
+                raise ValueError(
+                    "temperature parameter must be set when uncertainties is enabled"
+                )
+            log.info(
+                f"Uncertainty quantification enabled using '{self.uncertainties}' "
+                f"at T={self.temperature} K (CEA method)"
+            )
+
         # --- Data Loading and Unit Setup ---
         io = self.data
         if isinstance(io, znh5md.IO):
-            io.include = ["position", "box"]
+            include_list = ["position", "box"]
+            if use_uncertainty:
+                include_list.append(self.uncertainties)
+            io.include = include_list
 
         frames = io[self.start : self.stop : self.step]
         ureg = pint.UnitRegistry()
         position_unit = ureg.angstrom
+
+        # --- Extract Energy Ensemble Data ---
+        energy_ensemble = None
+        if use_uncertainty:
+            log.info("Extracting energy ensemble data from frames...")
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+            ) as progress:
+                energy_task = progress.add_task(
+                    "[cyan]Extracting energies...", total=len(frames)
+                )
+                energy_list = []
+                for frame in frames:
+                    if hasattr(frame, "calc") and frame.calc is not None:
+                        ensemble = frame.calc.results.get(self.uncertainties, None)
+                        if ensemble is None:
+                            raise ValueError(
+                                f"Frame missing '{self.uncertainties}' in calc.results"
+                            )
+                        energy_list.append(ensemble)
+                    else:
+                        raise ValueError(
+                            f"Frame has no calculator attached. Cannot extract '{self.uncertainties}'"
+                        )
+                    progress.update(energy_task, advance=1)
+            energy_ensemble = jnp.array(energy_list)
+            log.info(f"Extracted energy ensemble: shape {energy_ensemble.shape}")
 
         # --- Molecule Identification ---
         graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
@@ -349,31 +561,41 @@ class RadialDistributionFunction(zntrack.Node):
 
         if self.structures:
             log.info("Preprocessing: Calculating COMs for all frames...")
-            for name, mol_indices_tuples in tqdm(
-                molecules.items(), desc="Computing COMs"
-            ):
-                n_molecules = len(mol_indices_tuples)
-                if n_molecules == 0:
-                    continue
-                n_atoms_per_mol = len(mol_indices_tuples[0])
-                atom_indices = jnp.array(mol_indices_tuples)
-                mol_masses = jnp.array(masses[name])
-
-                # Process frames sequentially with jax.lax.map
-                def process_frame(frame_args):
-                    frame_positions, frame_cell = frame_args
-                    return _calculate_pbc_aware_com_for_frame(
-                        frame_positions,
-                        frame_cell,
-                        atom_indices,
-                        mol_masses,
-                        n_molecules,
-                        n_atoms_per_mol,
-                    )
-
-                particle_positions[name] = jax.lax.map(
-                    process_frame, (all_positions, all_cells)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+            ) as progress:
+                com_task = progress.add_task(
+                    "[cyan]Computing COMs...", total=len(molecules)
                 )
+                for name, mol_indices_tuples in molecules.items():
+                    n_molecules = len(mol_indices_tuples)
+                    if n_molecules == 0:
+                        progress.update(com_task, advance=1)
+                        continue
+                    n_atoms_per_mol = len(mol_indices_tuples[0])
+                    atom_indices = jnp.array(mol_indices_tuples)
+                    mol_masses = jnp.array(masses[name])
+
+                    # Process frames sequentially with jax.lax.map
+                    def process_frame(frame_args):
+                        frame_positions, frame_cell = frame_args
+                        return _calculate_pbc_aware_com_for_frame(
+                            frame_positions,
+                            frame_cell,
+                            atom_indices,
+                            mol_masses,
+                            n_molecules,
+                            n_atoms_per_mol,
+                        )
+
+                    particle_positions[name] = jax.lax.map(
+                        process_frame, (all_positions, all_cells)
+                    )
+                    progress.update(com_task, advance=1)
         else:
             log.info("Preprocessing: Gathering atomic positions...")
             for name, atom_indices_tuples in molecules.items():
@@ -384,24 +606,28 @@ class RadialDistributionFunction(zntrack.Node):
         structure_names = sorted(molecules.keys())
         pairs = generate_sorted_pairs(structure_names)
 
-        # Calculate total number of batches for all pairs
-        n_frames = len(frames)
-        total_batches = sum(
-            (n_frames + self.batch_size - 1) // self.batch_size for pair in pairs
-        )
+        # Create Rich progress bar with two tasks
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+        ) as progress:
+            overall_task = progress.add_task(
+                "[bold green]Overall Progress", total=len(pairs)
+            )
+            current_task = progress.add_task("[cyan]Current Pair", total=1, visible=False)
 
-        # Create a single progress bar for all RDF calculations
-        with tqdm(total=total_batches, desc="Computing RDFs", unit="batch") as pbar:
             for struct_a, struct_b in pairs:
                 if (
                     struct_a not in particle_positions
                     or struct_b not in particle_positions
                 ):
+                    progress.update(overall_task, advance=1)
                     continue
 
                 pair_key = f"{struct_a}-{struct_b}"
-                pbar.set_postfix_str(f"Processing {pair_key}")
-
                 pos_a = particle_positions[struct_a]
                 pos_b = particle_positions[struct_b]
 
@@ -411,32 +637,104 @@ class RadialDistributionFunction(zntrack.Node):
                 bin_edges = np.arange(0, r_max, self.bin_width)
                 bin_centers = bin_edges[:-1] + self.bin_width / 2.0
 
-                # --- RDF Calculation with progress callback ---
-                def update_progress(n):
-                    pbar.update(n)
+                # Calculate number of batches
+                n_frames = len(all_cells)
+                n_batches_per_model = (n_frames + self.batch_size - 1) // self.batch_size
 
-                g_r, num_dens_a, num_dens_b = compute_rdf(
-                    pos_a,
-                    pos_b,
-                    all_cells,
-                    jnp.array(bin_edges),
-                    batch_size=self.batch_size,
-                    exclude_self=(struct_a == struct_b),
-                    progress_callback=update_progress,
-                )
-                g_r_np = np.asarray(g_r)
+                # --- RDF Calculation ---
+                if use_uncertainty:
+                    assert energy_ensemble is not None
+                    assert self.temperature is not None
+
+                    # Calculate total batches across all models
+                    n_models = energy_ensemble.shape[1]
+                    total_batches = n_models * n_batches_per_model
+
+                    # Update current task for batch tracking
+                    progress.update(
+                        current_task,
+                        description=f"[cyan]Pair: {pair_key}",
+                        total=total_batches,
+                        completed=0,
+                        visible=True,
+                    )
+
+                    g_r, g_r_std, g_r_ensemble, num_dens_a, num_dens_b = (
+                        compute_rdf_with_ensemble_uncertainty(
+                            pos_a,
+                            pos_b,
+                            all_cells,
+                            jnp.array(bin_edges),
+                            energy_ensemble,
+                            self.temperature,
+                            batch_size=self.batch_size,
+                            exclude_self=(struct_a == struct_b),
+                            progress=progress,
+                            batch_task_id=current_task,
+                        )
+                    )
+                    g_r_np = np.asarray(g_r)
+                    g_r_std_np = np.asarray(g_r_std)
+                    g_r_ensemble_np = np.asarray(g_r_ensemble)
+
+                    # Hide current task after completion
+                    progress.update(current_task, visible=False)
+                else:
+                    # For standard RDF, track batches
+                    progress.update(
+                        current_task,
+                        description=f"[cyan]Pair: {pair_key}",
+                        visible=True,
+                        total=n_batches_per_model,
+                        completed=0,
+                    )
+
+                    g_r, num_dens_a, num_dens_b = compute_rdf(
+                        pos_a,
+                        pos_b,
+                        all_cells,
+                        jnp.array(bin_edges),
+                        batch_size=self.batch_size,
+                        exclude_self=(struct_a == struct_b),
+                        progress=progress,
+                        batch_task_id=current_task,
+                    )
+                    g_r_np = np.asarray(g_r)
+                    g_r_std_np = None
+                    g_r_ensemble_np = None
+
+                    progress.update(current_task, visible=False)
 
                 # --- Save Data and Metrics ---
                 data_file = self.data_path / f"rdf_{pair_key}.txt"
-                np.savetxt(
-                    data_file,
-                    np.vstack([bin_centers, g_r_np]).T,
-                    header=f"r ({position_unit:~P}), g(r)",
-                )
+                if use_uncertainty:
+                    assert g_r_std_np is not None
+                    assert g_r_ensemble_np is not None
+                    # Save with uncertainty columns
+                    np.savetxt(
+                        data_file,
+                        np.vstack([bin_centers, g_r_np, g_r_std_np]).T,
+                        header=f"r ({position_unit:~P}), g(r), g(r)_std",
+                    )
+                    # Save full ensemble data separately
+                    ensemble_file = self.data_path / f"rdf_{pair_key}_ensemble.txt"
+                    np.savetxt(
+                        ensemble_file,
+                        g_r_ensemble_np.T,
+                        header=f"Per-model g(r) for {pair_key} (columns = models)",
+                    )
+                else:
+                    np.savetxt(
+                        data_file,
+                        np.vstack([bin_centers, g_r_np]).T,
+                        header=f"r ({position_unit:~P}), g(r)",
+                    )
 
                 self.rdf[pair_key] = {
                     "bin_centers": bin_centers.tolist(),
                     "g_r": g_r_np.tolist(),
+                    "g_r_std": g_r_std_np.tolist() if use_uncertainty else None,
+                    "g_r_ensemble": g_r_ensemble_np.tolist() if use_uncertainty else None,
                     "unit": f"{position_unit:~P}",
                     "number_density_a": float(num_dens_a),
                     "number_density_b": float(num_dens_b),
@@ -444,13 +742,32 @@ class RadialDistributionFunction(zntrack.Node):
 
                 # --- Plotting ---
                 plt.figure(figsize=(10, 6))
-                plt.plot(bin_centers, g_r_np, label=pair_key)
+                plt.plot(bin_centers, g_r_np, label=pair_key, linewidth=2)
+
+                if use_uncertainty:
+                    assert g_r_std_np is not None
+                    # Plot 95% confidence interval (±1.96 * σ)
+                    ci_factor = 1.96
+                    plt.fill_between(
+                        bin_centers,
+                        g_r_np - ci_factor * g_r_std_np,
+                        g_r_np + ci_factor * g_r_std_np,
+                        alpha=0.3,
+                        label="95% CI",
+                    )
+
                 plt.xlabel(f"r  / {position_unit:~P}")
                 plt.ylabel("g(r)")
-                plt.title(f"Radial Distribution Function: {pair_key}")
+                title = f"Radial Distribution Function: {pair_key}"
+                if use_uncertainty:
+                    title += f" (T={self.temperature} K)"
+                plt.title(title)
                 plt.axhline(1.0, color="grey", linestyle="--", label="Ideal Gas g(r)=1")
                 plt.grid(True, linestyle="--", alpha=0.6)
                 plt.legend()
                 plt.tight_layout()
                 plt.savefig(self.figures_path / f"rdf_{pair_key}.png", dpi=300)
                 plt.close()
+
+                # Update overall progress
+                progress.update(overall_task, advance=1)
