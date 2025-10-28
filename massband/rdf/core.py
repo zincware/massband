@@ -293,7 +293,7 @@ class RadialDistributionFunction(zntrack.Node):
         Directory containing RDF data files.
     """
 
-    data: znh5md.IO | list[ase.Atoms]= zntrack.deps()
+    data: znh5md.IO | list[ase.Atoms] = zntrack.deps()
     structures: list[str] | None = zntrack.params(None)
     bin_width: float = zntrack.params(0.05)
     start: int = zntrack.params(0)

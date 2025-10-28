@@ -1,14 +1,29 @@
+import numpy as np
 import pint
 import zntrack
 from rdkit import Chem
 
-from massband.diffusion.kinisi_diffusion import KinisiSelfDiffusion
+from massband.diffusion.types import DiffusionData
 
 ureg = pint.UnitRegistry()
 
 
 class NernstEinsteinIonicConductivity(zntrack.Node):
     """Compute the ionic conductivity using the Nernst-Einstein equation.
+
+    Parameters
+    ----------
+    diffusion : dict[str, DiffusionData]
+        Dictionary mapping structure names (SMILES strings) to their DiffusionData.
+        The box field must be present in the DiffusionData to calculate volume.
+    temperature : float
+        Simulation temperature in Kelvin.
+
+    Attributes
+    ----------
+    conductivity : dict[str, DiffusionData]
+        Dictionary mapping "total" to the total ionic conductivity statistics.
+        Contains mean, std, var, occurrences (total charged species), unit, and box.
 
     References
     ----------
@@ -17,13 +32,29 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
     https://journals.aps.org/prl/pdf/10.1103/PhysRevLett.122.136001
     """
 
-    diffusion: KinisiSelfDiffusion = zntrack.deps()
+    diffusion: dict[str, DiffusionData] = zntrack.deps()
+    d_infinite: dict[str, DiffusionData] | None = zntrack.deps(None)
     temperature: float = zntrack.params()
-    conductivity: dict = zntrack.metrics()
+    conductivity: dict[str, DiffusionData] = zntrack.metrics()
+
 
     def run(self):
-        atoms = self.diffusion.frames[0]
-        volume = atoms.get_volume() * ureg.angstrom**3
+        # Extract volume from box field
+        box = None
+        for data in self.diffusion.values():
+            if data["box"] is not None:
+                box = data["box"]
+                break
+
+        if box is None:
+            raise ValueError(
+                "Box information is required in DiffusionData to calculate volume. "
+                "Ensure the diffusion analysis includes box data."
+            )
+
+        # Calculate volume from box (assuming box is 3x3 cell array)
+        box_array = np.array(box)
+        volume = np.linalg.det(box_array) * ureg.angstrom**3
 
         # e^2 / (T * kB * V)
         elementary_charge = 1 * ureg.elementary_charge
@@ -36,7 +67,7 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
         # Collect charged species data for uncertainty propagation
         charged_species = {}
 
-        for kind, data in self.diffusion.diffusion.items():
+        for kind, data in self.diffusion.items():
             mol = Chem.MolFromSmiles(kind)
             if mol is None:
                 raise ValueError(f"Invalid SMILES string: {kind}")
@@ -81,14 +112,23 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
         )
         sigma_std = sigma_variance**0.5
 
+        # Calculate total number of charged species
+        total_charged_species = sum(
+            data["occurrences"] for _, data in charged_species.values()
+        )
+
         print(
             f"Nernst-Einstein ionic conductivity: {sigma.magnitude:.3e} ± {sigma_std.magnitude:.3e} S/m"
         )
 
-        # Store results
+        # Store results under "total" key as DiffusionData structure
         self.conductivity = {
-            "mean": sigma.magnitude,
-            "std": sigma_std.magnitude,
-            "var": sigma_variance.magnitude,
-            "unit": str(sigma.units),
+            "total": {
+                "mean": sigma.magnitude,
+                "std": sigma_std.magnitude,
+                "var": sigma_variance.magnitude,
+                "occurrences": total_charged_species,
+                "unit": str(sigma.units),
+                "box": box,
+            }
         }

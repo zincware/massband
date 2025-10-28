@@ -7,7 +7,7 @@ import scipp as sc
 import zntrack
 from kinisi.arrhenius import Arrhenius
 
-from massband.diffusion.kinisi_diffusion import DiffusionData
+from massband.diffusion.types import DiffusionData
 
 
 class KinisiDiffusionArrhenius(zntrack.Node):

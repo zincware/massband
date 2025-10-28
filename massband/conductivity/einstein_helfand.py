@@ -9,7 +9,6 @@ import rdkit2ase
 import scipp as sc
 import znh5md
 import zntrack
-from kinisi import Species
 from kinisi.analyze import ConductivityAnalyzer
 from rdkit import Chem
 
@@ -99,6 +98,8 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     conductivity: dict[str, float | str] = zntrack.metrics()
 
     def run(self):
+        from kinisi import Species
+
         self.data_path.mkdir(exist_ok=True, parents=True)
         self.figures_path.mkdir(exist_ok=True, parents=True)
 

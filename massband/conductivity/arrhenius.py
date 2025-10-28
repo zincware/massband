@@ -57,8 +57,8 @@ class KinisiConductivityArrhenius(zntrack.Node):
 
         # Extract conductivity data across all temperatures
         sigma = {
-            "mean": [x.conductivity["mean"] for x in self.conductivity],
-            "var": [x.conductivity["var"] for x in self.conductivity],
+            "mean": [x.conductivity["total"]["mean"] for x in self.conductivity],
+            "var": [x.conductivity["total"]["var"] for x in self.conductivity],
         }
 
         td = sc.DataArray(

@@ -6,7 +6,7 @@ import scipp as sc
 import zntrack
 from kinisi.yeh_hummer import YehHummer as KinisiYehHummerAnalyzer
 
-from massband.diffusion.kinisi_diffusion import DiffusionData
+from massband.diffusion.types import DiffusionData
 
 
 class KinisiYehHummer(zntrack.Node):

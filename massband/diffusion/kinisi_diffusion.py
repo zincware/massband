@@ -15,17 +15,9 @@ import znh5md
 import zntrack
 from kinisi.analyze import DiffusionAnalyzer
 
+from massband.diffusion.types import DiffusionData
+
 log = logging.getLogger(__name__)
-
-
-class DiffusionData(t.TypedDict):
-    mean: float
-    std: float
-    var: float
-    occurrences: int
-    unit: str
-    box: list[list[float]] | None
-
 
 
 def make_hdf5_file_opener(
