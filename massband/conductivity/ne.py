@@ -15,7 +15,12 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
     ----------
     diffusion : dict[str, DiffusionData]
         Dictionary mapping structure names (SMILES strings) to their DiffusionData.
-        The box field must be present in the DiffusionData to calculate volume.
+        The box field must be present to calculate volume and number density.
+        Provides occurrences (n_i) and box dimensions for all species.
+    d_infinite : dict[str, DiffusionData] | None
+        Optional dictionary of infinite-size diffusion coefficients (e.g., from
+        YehHummer finite-size correction). If provided, these D values override
+        those in diffusion, while number densities are still computed from diffusion.
     temperature : float
         Simulation temperature in Kelvin.
 
@@ -37,7 +42,6 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
     temperature: float = zntrack.params()
     conductivity: dict[str, DiffusionData] = zntrack.metrics()
 
-
     def run(self):
         # Extract volume from box field
         box = None
@@ -56,12 +60,12 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
         box_array = np.array(box)
         volume = np.linalg.det(box_array) * ureg.angstrom**3
 
-        # e^2 / (T * kB * V)
+        # e^2 / (T * kB) - prefactor without volume (using number density formulation)
         elementary_charge = 1 * ureg.elementary_charge
         boltzmann_constant = 1 * ureg.boltzmann_constant
 
         prefactor = elementary_charge**2 / (
-            self.temperature * ureg.kelvin * boltzmann_constant * volume
+            self.temperature * ureg.kelvin * boltzmann_constant
         )
 
         # Collect charged species data for uncertainty propagation
@@ -87,18 +91,30 @@ class NernstEinsteinIonicConductivity(zntrack.Node):
         variances = []
 
         for kind, (charge, data) in charged_species.items():
-            # Use mean and std from diffusion coefficient
-            D_mean = data["mean"] * ureg(data["unit"])
-            D_std = data["std"] * ureg(data["unit"])
+            # Compute number density from diffusion data
             n_ions = data["occurrences"]
+            number_density = n_ions / volume
 
-            # Contribution to conductivity mean
-            contribution = D_mean * (charge**2) * n_ions
+            # Use d_infinite if provided, otherwise use diffusion
+            if self.d_infinite is not None and kind in self.d_infinite:
+                D_data = self.d_infinite[kind]
+                print(f"Using D_infinite for {kind}")
+            else:
+                D_data = data
+                print(f"Using D from diffusion for {kind}")
+
+            # Use mean and std from selected diffusion coefficient
+            D_mean = D_data["mean"] * ureg(D_data["unit"])
+            D_std = D_data["std"] * ureg(D_data["unit"])
+
+            # Contribution to conductivity mean using number density formulation
+            # σ_i = ρ_i * q_i^2 * D_i
+            contribution = number_density * (charge**2) * D_mean
             contributions.append(contribution)
 
             # Contribution to conductivity variance (error propagation)
-            # Var(c * D) = c^2 * Var(D), where c = charge^2 * n_ions
-            c = (charge**2) * n_ions
+            # Var(c * D) = c^2 * Var(D), where c = ρ_i * charge^2
+            c = number_density * (charge**2)
             contribution_variance = (c**2) * (D_std**2)
             variances.append(contribution_variance)
 

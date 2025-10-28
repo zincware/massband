@@ -25,6 +25,6 @@ class DiffusionData(t.TypedDict):
     mean: float
     std: float
     var: float
-    occurrences: int
+    occurrences: int | None
     unit: str
     box: list[list[float]] | None

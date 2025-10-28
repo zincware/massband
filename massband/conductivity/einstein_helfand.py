@@ -23,8 +23,6 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
 
     Parameters
     ----------
-    file : Union[str, Path] | None
-        Path to the trajectory file in h5md format.
     data: znh5md.IO | list[ase.Atoms] | None, default None
         znh5md.IO object for trajectory data, as an alternative to 'file'.
     structures : list[str]
@@ -79,8 +77,7 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     .. [1] https://kinisi.readthedocs.io/en/stable/
     """
 
-    file: Union[str, Path] | None = zntrack.deps_path()
-    data: znh5md.IO | list[ase.Atoms] | None = zntrack.deps(None)
+    data: znh5md.IO | list[ase.Atoms] = zntrack.deps()
     structures: list[str] = zntrack.params()
     start: int = zntrack.params(0)
     stop: int | None = zntrack.params(None)
@@ -104,16 +101,9 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
         self.figures_path.mkdir(exist_ok=True, parents=True)
 
         # --- Data Loading ---
-        if self.data is not None and self.file is not None:
-            raise ValueError("Provide either 'data' or 'file', not both.")
-        elif self.file is not None:
-            io = znh5md.IO(self.file, include=["position", "box"])
-        elif self.data is not None:
-            io = self.data
-            if isinstance(io, znh5md.IO):
-                io.include = ["position", "box"]
-        else:
-            raise ValueError("Either 'file' or 'data' must be provided.")
+        io = self.data
+        if isinstance(io, znh5md.IO):
+            io.include = ["position", "box"]
         frames = io[self.start : self.stop : self.step]
 
         graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)

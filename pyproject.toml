@@ -34,6 +34,9 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-root = ""
 
+[tool.uv.sources]
+kinisi = { git = "https://github.com/PythonFZ/kinisi", rev = "multi-species-update" }
+
 [dependency-groups]
 dev = [
     "ipykernel>=6.29.5",
