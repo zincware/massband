@@ -51,9 +51,9 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
         Output directory for data files.
     figures_path : Path
         Output directory for plots.
-    conductivity : dict[str, float]
-        Dictionary containing system-wide conductivity coefficient and standard deviation.
-        Keys: 'mean', 'std', 'var'.
+    conductivity : dict[str, dict[str, float]]
+        Dictionary mapping "total" to the total system-wide conductivity statistics.
+        Contains mean, std, var, and unit under the "total" key.
 
     Examples
     --------
@@ -69,7 +69,9 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     ...     )
     >>> project.repro()
     >>> cond.conductivity.keys()
-    dict_keys(['mean', 'std', 'var'])
+    dict_keys(['total'])
+    >>> cond.conductivity["total"].keys()
+    dict_keys(['mean', 'std', 'var', 'unit'])
 
     References
     ----------
@@ -91,7 +93,7 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     start_dt: float = zntrack.params()  # in fs
     temperature: float = zntrack.params()  # in K
 
-    conductivity: dict[str, float | str] = zntrack.metrics()
+    conductivity: dict[str, dict[str, float | str]] = zntrack.metrics()
 
     def run(self):
         from kinisi import Species
@@ -193,10 +195,12 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             self.figures_path / "sigma_distribution.png", dpi=300, bbox_inches="tight"
         )
         self.conductivity = {
-            "mean": float(sc.mean(new_sigma).value),
-            "std": float(sc.std(new_sigma, ddof=1).value),
-            "var": float(sc.var(new_sigma, ddof=1).value),
-            "unit": str(new_sigma.unit),
+            "total": {
+                "mean": float(sc.mean(new_sigma).value),
+                "std": float(sc.std(new_sigma, ddof=1).value),
+                "var": float(sc.var(new_sigma, ddof=1).value),
+                "unit": str(new_sigma.unit),
+            }
         }
 
         cond.mscd.save_hdf5(self.data_path / f"{structure}_msd.h5")
