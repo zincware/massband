@@ -141,52 +141,161 @@ def rdf_hist_single_frame(pos_a, pos_b, frame_cell, exclude_self, bin_edges):
     return jnp.histogram(dists.flatten(), bins=bin_edges)[0]
 
 
-def compute_rdf(
+def _compute_frame_histograms(
     positions_a: jnp.ndarray,
     positions_b: jnp.ndarray,
     cell: jnp.ndarray,
     bin_edges: jnp.ndarray,
-    batch_size: int = 100,
-    exclude_self: bool = False,
+    exclude_self: bool,
+    batch_size: int,
     progress: Progress | None = None,
     batch_task_id: int | None = None,
-):
+) -> jnp.ndarray:
     """
-    Compute the radial distribution function (RDF) g(r) for a trajectory.
+    Compute distance histograms for all frames with batching.
 
-    Uses numerically stable normalization to avoid overflow issues with large datasets.
+    Parameters
+    ----------
+    positions_a : jnp.ndarray
+        Positions of species A, shape (n_frames, n_particles_a, 3)
+    positions_b : jnp.ndarray
+        Positions of species B, shape (n_frames, n_particles_b, 3)
+    cell : jnp.ndarray
+        Simulation cell, shape (n_frames, 3, 3)
+    bin_edges : jnp.ndarray
+        Bin edges for histogram
+    exclude_self : bool
+        Whether to exclude self-interactions
+    batch_size : int
+        Number of frames to process per batch
+    progress : Progress, optional
+        Rich Progress instance for tracking progress
+    batch_task_id : int, optional
+        Task ID for updating batch progress
+
+    Returns
+    -------
+    hist_per_frame : jnp.ndarray
+        Histogram per frame, shape (n_frames, n_bins)
     """
     n_frames = positions_a.shape[0]
-    n_a = positions_a.shape[1]
-    n_b = positions_b.shape[1]
-    hist_sum = jnp.zeros(
-        len(bin_edges) - 1, dtype=jnp.float32
-    )  # Use float32 for accumulation
+    hist_per_frame = []
 
-    # Process in batches to manage memory
     n_batches = (n_frames + batch_size - 1) // batch_size
     for i in range(n_batches):
-        start_idx, end_idx = i * batch_size, min((i + 1) * batch_size, n_frames)
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, n_frames)
 
         batch_pos_a = positions_a[start_idx:end_idx]
         batch_pos_b = positions_b[start_idx:end_idx]
         batch_cell = cell[start_idx:end_idx]
 
-        # Vectorize histogram calculation over the batch of frames
+        # Vectorize histogram calculation over batch
         batch_histograms = vmap(rdf_hist_single_frame, in_axes=(0, 0, 0, None, None))(
             batch_pos_a, batch_pos_b, batch_cell, exclude_self, bin_edges
         )
-        hist_sum += jnp.sum(batch_histograms, axis=0).astype(jnp.float32)
+        hist_per_frame.append(batch_histograms)
 
-        # Update progress
+        # Update batch progress
         if progress is not None and batch_task_id is not None:
             progress.update(batch_task_id, advance=1)
 
-    # --- Numerically Stable Normalization ---
-    # Instead of computing (n_pairs * n_frames) / (mean_volume * shell_volume)
-    # We compute: hist / ((n_pairs / mean_volume) * n_frames * shell_volume)
-    # This avoids large intermediate values
+    return jnp.concatenate(hist_per_frame, axis=0).astype(jnp.float32)
 
+
+def _apply_cea_reweighting(
+    hist_per_frame: jnp.ndarray,
+    energy_model: jnp.ndarray,
+    energy_mean: jnp.ndarray,
+    temperature: float,
+) -> jnp.ndarray:
+    """
+    Apply Cumulant Expansion Approximation (CEA) reweighting to histograms.
+
+    The CEA formula: O_CEA = <O> - <O*h> + <O>*<h>
+    where h = beta * (E_model - E_mean)
+
+    This method propagates ensemble energy uncertainties to RDF uncertainties
+    and is related to umbrella sampling reweighting methods.
+
+    Parameters
+    ----------
+    hist_per_frame : jnp.ndarray
+        Histogram per frame, shape (n_frames, n_bins)
+    energy_model : jnp.ndarray
+        Energy for specific model, shape (n_frames,)
+    energy_mean : jnp.ndarray
+        Mean energy across ensemble, shape (n_frames,)
+    temperature : float
+        Temperature in Kelvin
+
+    Returns
+    -------
+    hist_cea : jnp.ndarray
+        CEA-reweighted histogram (per-frame average), shape (n_bins,)
+
+    References
+    ----------
+    Torrie, Glenn M., and John P. Valleau. "Nonphysical sampling distributions
+    in Monte Carlo free-energy estimation: Umbrella sampling."
+    Journal of Computational Physics 23.2 (1977): 187-199.
+    https://doi.org/10.1016/0021-9991(77)90121-8
+    """
+    # Compute beta = 1/(k_B * T) in eV^-1
+    ureg = pint.UnitRegistry()
+    k_B = ureg.boltzmann_constant
+    beta = (1.0 / (k_B * temperature * ureg.kelvin)).to("1/eV").magnitude
+
+    # Compute CEA reweighting factor
+    cea_factor = beta * (energy_model - energy_mean)  # (n_frames,)
+
+    # Apply CEA formula
+    O_mean = jnp.mean(hist_per_frame, axis=0)
+    Oh_mean = jnp.mean(hist_per_frame * cea_factor[:, None], axis=0)
+    h_mean = jnp.mean(cea_factor)
+
+    hist_cea = O_mean - Oh_mean + O_mean * h_mean
+
+    return hist_cea
+
+
+def _normalize_histogram_to_rdf(
+    hist: jnp.ndarray,
+    n_a: int,
+    n_b: int,
+    cell: jnp.ndarray,
+    bin_edges: jnp.ndarray,
+    exclude_self: bool,
+) -> tuple[jnp.ndarray, float, float]:
+    """
+    Normalize histogram to radial distribution function g(r).
+
+    Applies finite-size corrections and computes number densities.
+
+    Parameters
+    ----------
+    hist : jnp.ndarray
+        Histogram of distances (can be per-frame average or accumulated)
+    n_a : int
+        Number of particles of species A
+    n_b : int
+        Number of particles of species B
+    cell : jnp.ndarray
+        Simulation cell, shape (n_frames, 3, 3)
+    bin_edges : jnp.ndarray
+        Bin edges for histogram
+    exclude_self : bool
+        Whether self-interactions are excluded (for same-species RDF)
+
+    Returns
+    -------
+    g_r : jnp.ndarray
+        Normalized radial distribution function
+    number_density_a : float
+        Number density of species A
+    number_density_b : float
+        Number density of species B
+    """
     volume = jnp.linalg.det(cell)
     mean_volume = jnp.mean(volume)
 
@@ -198,7 +307,7 @@ def compute_rdf(
     number_density_a = n_a / mean_volume
     number_density_b = n_b / mean_volume
 
-    # Compute pair density (pairs per unit volume) to avoid overflow
+    # Compute pair density (pairs per unit volume)
     if exclude_self:
         # For same-species RDF, we have N*(N-1) pairs per frame
         pair_density = (n_a * (n_a - 1)) / mean_volume
@@ -206,47 +315,33 @@ def compute_rdf(
         # For different species, we have N_a * N_b pairs per frame
         pair_density = (n_a * n_b) / mean_volume
 
-    # Now normalize: g(r) = hist / (pair_density * n_frames * shell_volume)
-    # We can safely compute this step-by-step to avoid overflow
-
-    # First normalize by number of frames (this reduces the magnitude)
-    hist_per_frame = hist_sum / n_frames
-
-    # Then normalize by pair density and shell volume
-    # This is equivalent to the original formula but avoids large intermediate products
+    # Normalize: g(r) = hist / (pair_density * shell_volume)
     norm_factor = pair_density * shell_volume
 
     # Avoid division by zero for empty bins or zero-volume shells
-    g_r = jnp.where(norm_factor > 1e-9, hist_per_frame / norm_factor, 0)
+    g_r = jnp.where(norm_factor > 1e-9, hist / norm_factor, 0)
 
     return g_r, number_density_a, number_density_b
 
 
-def compute_rdf_with_ensemble_uncertainty(
+def compute_rdf(
     positions_a: jnp.ndarray,
     positions_b: jnp.ndarray,
     cell: jnp.ndarray,
     bin_edges: jnp.ndarray,
-    energy_ensemble: jnp.ndarray,
-    temperature: float,
     batch_size: int = 100,
     exclude_self: bool = False,
+    energy_ensemble: jnp.ndarray | None = None,
+    temperature: float | None = None,
     progress: Progress | None = None,
     batch_task_id: int | None = None,
-):
+) -> tuple[jnp.ndarray, jnp.ndarray | None, jnp.ndarray | None, float, float]:
     """
-    Compute RDF with uncertainty using Cumulant Expansion Approximation (CEA).
+    Compute radial distribution function (RDF) g(r) with optional ensemble uncertainty.
 
-    Uses the CEA method from i-pi committee reweighting to propagate ensemble
-    energy uncertainties to RDF uncertainties. This approach is related to
-    umbrella sampling reweighting methods.
-
-    References
-    ----------
-    Torrie, Glenn M., and John P. Valleau. "Nonphysical sampling distributions
-    in Monte Carlo free-energy estimation: Umbrella sampling."
-    Journal of Computational Physics 23.2 (1977): 187-199.
-    https://doi.org/10.1016/0021-9991(77)90121-8
+    When energy_ensemble is provided, computes uncertainty-aware RDFs using the
+    Cumulant Expansion Approximation (CEA) method from i-pi committee reweighting.
+    Otherwise, computes standard averaged RDF.
 
     Parameters
     ----------
@@ -258,109 +353,128 @@ def compute_rdf_with_ensemble_uncertainty(
         Simulation cell, shape (n_frames, 3, 3)
     bin_edges : jnp.ndarray
         Bin edges for histogram, shape (n_bins + 1,)
-    energy_ensemble : jnp.ndarray
-        Ensemble energies, shape (n_frames, n_models)
-    temperature : float
-        Temperature in Kelvin
-    batch_size : int
+    batch_size : int, default 100
         Number of frames to process per batch
-    exclude_self : bool
+    exclude_self : bool, default False
         Whether to exclude self-interactions (for same-species RDF)
+    energy_ensemble : jnp.ndarray, optional
+        Ensemble energies, shape (n_frames, n_models). If provided, enables
+        uncertainty quantification via CEA method. Requires temperature parameter.
+    temperature : float, optional
+        Temperature in Kelvin. Required when energy_ensemble is provided.
     progress : Progress, optional
         Rich Progress instance for tracking progress
     batch_task_id : int, optional
-        Task ID for updating batch progress (across all models)
+        Task ID for updating batch progress
 
     Returns
     -------
-    g_r_mean : jnp.ndarray
-        Mean RDF across ensemble models
-    g_r_std : jnp.ndarray
-        Standard deviation of RDF across models
-    g_r_ensemble : jnp.ndarray
-        Per-model RDFs, shape (n_models, n_bins)
+    g_r : jnp.ndarray
+        Mean RDF g(r), shape (n_bins,)
+    g_r_std : jnp.ndarray or None
+        Standard deviation of RDF across ensemble models if energy_ensemble provided,
+        otherwise None
+    g_r_ensemble : jnp.ndarray or None
+        Per-model RDFs, shape (n_models, n_bins), if energy_ensemble provided,
+        otherwise None
     number_density_a : float
         Number density of species A
     number_density_b : float
         Number density of species B
+
+    References
+    ----------
+    Torrie, Glenn M., and John P. Valleau. "Nonphysical sampling distributions
+    in Monte Carlo free-energy estimation: Umbrella sampling."
+    Journal of Computational Physics 23.2 (1977): 187-199.
+    https://doi.org/10.1016/0021-9991(77)90121-8
+
+    Raises
+    ------
+    ValueError
+        If energy_ensemble is provided but temperature is not
     """
-    n_frames, n_models = energy_ensemble.shape
     n_a = positions_a.shape[1]
     n_b = positions_b.shape[1]
 
-    # Compute beta = 1/(k_B * T) in eV^-1
-    ureg = pint.UnitRegistry()
-    k_B = ureg.boltzmann_constant
-    beta = (1.0 / (k_B * temperature * ureg.kelvin)).to("1/eV").magnitude
+    # Validate parameters for ensemble uncertainty
+    if energy_ensemble is not None:
+        if temperature is None:
+            raise ValueError("temperature must be provided when energy_ensemble is set")
+        n_frames, n_models = energy_ensemble.shape
+    else:
+        n_models = None
+
+    # --- Standard RDF (no ensemble uncertainty) ---
+    if energy_ensemble is None:
+        # Compute per-frame histograms
+        hist_per_frame = _compute_frame_histograms(
+            positions_a,
+            positions_b,
+            cell,
+            bin_edges,
+            exclude_self,
+            batch_size,
+            progress,
+            batch_task_id,
+        )
+
+        # Average over frames
+        hist_avg = jnp.mean(hist_per_frame, axis=0)
+
+        # Normalize to g(r)
+        g_r, number_density_a, number_density_b = _normalize_histogram_to_rdf(
+            hist_avg, n_a, n_b, cell, bin_edges, exclude_self
+        )
+
+        return g_r, None, None, number_density_a, number_density_b
+
+    # --- Ensemble uncertainty RDF (CEA method) ---
+    assert temperature is not None  # Already validated above
+    assert n_models is not None
 
     # Compute mean energy per frame across ensemble
-    E_mean = jnp.mean(energy_ensemble, axis=1)  # (n_frames,)
+    energy_mean = jnp.mean(energy_ensemble, axis=1)  # (n_frames,)
 
-    # Storage for per-model RDFs
-    g_r_models = []
+    # Compute per-frame histograms once (shared across all models)
+    # For first model: compute histograms with progress tracking
+    n_frames = positions_a.shape[0]
+    n_batches_per_model = (n_frames + batch_size - 1) // batch_size
+
+    hist_per_frame = _compute_frame_histograms(
+        positions_a,
+        positions_b,
+        cell,
+        bin_edges,
+        exclude_self,
+        batch_size,
+        progress,
+        batch_task_id,
+    )
 
     # Process each model in the ensemble
+    g_r_models = []
     for model_idx in range(n_models):
-        E_model = energy_ensemble[:, model_idx]  # (n_frames,)
+        energy_model = energy_ensemble[:, model_idx]  # (n_frames,)
 
-        # Compute h = beta * (E_model - E_mean) for CEA
-        h = beta * (E_model - E_mean)  # (n_frames,)
+        # Apply CEA reweighting
+        hist_cea = _apply_cea_reweighting(
+            hist_per_frame, energy_model, energy_mean, temperature
+        )
 
-        # Compute per-frame histograms
-        hist_per_frame = []
-        n_batches = (n_frames + batch_size - 1) // batch_size
-
-        for i in range(n_batches):
-            start_idx = i * batch_size
-            end_idx = min((i + 1) * batch_size, n_frames)
-
-            batch_pos_a = positions_a[start_idx:end_idx]
-            batch_pos_b = positions_b[start_idx:end_idx]
-            batch_cell = cell[start_idx:end_idx]
-
-            # Vectorize histogram calculation over batch
-            batch_histograms = vmap(rdf_hist_single_frame, in_axes=(0, 0, 0, None, None))(
-                batch_pos_a, batch_pos_b, batch_cell, exclude_self, bin_edges
-            )
-            hist_per_frame.append(batch_histograms)
-
-            # Update batch progress
-            if progress is not None and batch_task_id is not None:
-                progress.update(batch_task_id, advance=1)
-
-        # Concatenate all batches
-        hist_per_frame = jnp.concatenate(hist_per_frame, axis=0).astype(jnp.float32)
-
-        # Apply CEA formula: O_CEA = <O> - <O*h> + <O>*<h>
-        O_mean = jnp.mean(hist_per_frame, axis=0)
-        Oh_mean = jnp.mean(hist_per_frame * h[:, None], axis=0)
-        h_mean = jnp.mean(h)
-
-        hist_CEA = O_mean - Oh_mean + O_mean * h_mean
-
-        # Normalize to get g(r) using same method as standard RDF
-        volume = jnp.linalg.det(cell)
-        mean_volume = jnp.mean(volume)
-
-        min_box_lengths = jnp.min(jnp.linalg.norm(cell, axis=2), axis=1)
-        shell_volume = _finite_size_corrected_shell_volume(bin_edges, L=min_box_lengths)
-
-        number_density_a = n_a / mean_volume
-        number_density_b = n_b / mean_volume
-
-        if exclude_self:
-            pair_density = (n_a * (n_a - 1)) / mean_volume
-        else:
-            pair_density = (n_a * n_b) / mean_volume
-
-        # hist_CEA is already a per-frame average from the CEA formula (via jnp.mean)
-        # Just normalize by pair density and shell volume (no division by n_frames needed)
-        norm_factor = pair_density * shell_volume
-        g_r_model = jnp.where(norm_factor > 1e-9, hist_CEA / norm_factor, 0)
+        # Normalize to g(r)
+        g_r_model, number_density_a, number_density_b = _normalize_histogram_to_rdf(
+            hist_cea, n_a, n_b, cell, bin_edges, exclude_self
+        )
 
         g_r_models.append(g_r_model)
 
-    # Stack all models and compute statistics
+        # Update progress to match expected behavior (simulate per-model histogram computation)
+        # Skip first model since histogram computation already updated progress
+        if model_idx > 0 and progress is not None and batch_task_id is not None:
+            progress.update(batch_task_id, advance=n_batches_per_model)
+
+    # Compute ensemble statistics
     g_r_models = jnp.stack(g_r_models, axis=0)  # (n_models, n_bins)
     g_r_mean = jnp.mean(g_r_models, axis=0)
     g_r_std = jnp.std(g_r_models, axis=0)
@@ -642,68 +756,46 @@ class RadialDistributionFunction(zntrack.Node):
                 n_batches_per_model = (n_frames + self.batch_size - 1) // self.batch_size
 
                 # --- RDF Calculation ---
+                # Calculate total batches for progress tracking
                 if use_uncertainty:
                     assert energy_ensemble is not None
-                    assert self.temperature is not None
-
-                    # Calculate total batches across all models
                     n_models = energy_ensemble.shape[1]
                     total_batches = n_models * n_batches_per_model
-
-                    # Update current task for batch tracking
-                    progress.update(
-                        current_task,
-                        description=f"[cyan]Pair: {pair_key}",
-                        total=total_batches,
-                        completed=0,
-                        visible=True,
-                    )
-
-                    g_r, g_r_std, g_r_ensemble, num_dens_a, num_dens_b = (
-                        compute_rdf_with_ensemble_uncertainty(
-                            pos_a,
-                            pos_b,
-                            all_cells,
-                            jnp.array(bin_edges),
-                            energy_ensemble,
-                            self.temperature,
-                            batch_size=self.batch_size,
-                            exclude_self=(struct_a == struct_b),
-                            progress=progress,
-                            batch_task_id=current_task,
-                        )
-                    )
-                    g_r_np = np.asarray(g_r)
-                    g_r_std_np = np.asarray(g_r_std)
-                    g_r_ensemble_np = np.asarray(g_r_ensemble)
-
-                    # Hide current task after completion
-                    progress.update(current_task, visible=False)
                 else:
-                    # For standard RDF, track batches
-                    progress.update(
-                        current_task,
-                        description=f"[cyan]Pair: {pair_key}",
-                        visible=True,
-                        total=n_batches_per_model,
-                        completed=0,
-                    )
+                    total_batches = n_batches_per_model
 
-                    g_r, num_dens_a, num_dens_b = compute_rdf(
-                        pos_a,
-                        pos_b,
-                        all_cells,
-                        jnp.array(bin_edges),
-                        batch_size=self.batch_size,
-                        exclude_self=(struct_a == struct_b),
-                        progress=progress,
-                        batch_task_id=current_task,
-                    )
-                    g_r_np = np.asarray(g_r)
-                    g_r_std_np = None
-                    g_r_ensemble_np = None
+                # Setup progress tracking
+                progress.update(
+                    current_task,
+                    description=f"[cyan]Pair: {pair_key}",
+                    total=total_batches,
+                    completed=0,
+                    visible=True,
+                )
 
-                    progress.update(current_task, visible=False)
+                # Compute RDF (unified function handles both standard and ensemble cases)
+                g_r, g_r_std, g_r_ensemble, num_dens_a, num_dens_b = compute_rdf(
+                    pos_a,
+                    pos_b,
+                    all_cells,
+                    jnp.array(bin_edges),
+                    batch_size=self.batch_size,
+                    exclude_self=(struct_a == struct_b),
+                    energy_ensemble=energy_ensemble,
+                    temperature=self.temperature,
+                    progress=progress,
+                    batch_task_id=current_task,
+                )
+
+                # Convert to numpy arrays
+                g_r_np = np.asarray(g_r)
+                g_r_std_np = np.asarray(g_r_std) if g_r_std is not None else None
+                g_r_ensemble_np = (
+                    np.asarray(g_r_ensemble) if g_r_ensemble is not None else None
+                )
+
+                # Hide current task after completion
+                progress.update(current_task, visible=False)
 
                 # --- Save Data and Metrics ---
                 data_file = self.data_path / f"rdf_{pair_key}.txt"
