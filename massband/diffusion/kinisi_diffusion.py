@@ -15,6 +15,8 @@ import znh5md
 import zntrack
 from kinisi.analyze import DiffusionAnalyzer
 
+from massband.abc import ComparisonResults
+from massband.comparison_utils import create_bar_comparison, create_overlay_plot
 from massband.diffusion.types import DiffusionData
 from massband.utils import sanitize_structure_name
 
@@ -114,6 +116,165 @@ class KinisiSelfDiffusion(zntrack.Node):
     start_dt: float = zntrack.params()  # in fs
 
     diffusion: dict[str, DiffusionData] = zntrack.metrics()
+
+    @staticmethod
+    def compare(  # noqa: C901
+        *nodes: "KinisiSelfDiffusion",
+        labels: list[str] | None = None,
+        structures: list[str] | None = None,
+        use_plotly: bool = False,
+    ) -> ComparisonResults:
+        """Compare diffusion coefficients from multiple calculations.
+
+        Parameters
+        ----------
+        *nodes : KinisiSelfDiffusion
+            Multiple diffusion node instances to compare
+        labels : list[str] | None
+            Labels for each node (e.g., ["ML potential", "DFT", "Experiment"]).
+            If None, uses node indices as labels.
+        structures : list[str] | None
+            Specific structures to compare (e.g., ["[Li+]", "EC"]).
+            If None, compares all common structures across all nodes.
+        use_plotly : bool
+            If True, creates plotly figures; otherwise matplotlib.
+
+        Returns
+        -------
+        ComparisonResults
+            Dictionary containing comparative diffusion plots with keys:
+            - "diffusion_coefficients": bar chart comparing D values
+            - "relative_differences": bar chart showing relative % differences
+            - "msd_{structure}": MSD overlay plot for each structure
+        """
+        if len(nodes) < 2:
+            raise ValueError("At least two nodes are required for comparison")
+
+        # Generate default labels if not provided
+        if labels is None:
+            labels = [
+                node.name if node.name else f"Node {i + 1}"
+                for i, node in enumerate(nodes)
+            ]
+        elif len(labels) != len(nodes):
+            raise ValueError(
+                f"Number of labels ({len(labels)}) must match number of nodes ({len(nodes)})"
+            )
+
+        # Find common structures across all nodes
+        common_structures = set(nodes[0].diffusion.keys())
+        for node in nodes[1:]:
+            common_structures &= set(node.diffusion.keys())
+
+        if not common_structures:
+            raise ValueError("No common structures found across all nodes")
+
+        # Filter to specific structures if requested
+        if structures is not None:
+            common_structures = set(structures) & common_structures
+            if not common_structures:
+                raise ValueError(
+                    f"None of the requested structures {structures} are common to all nodes"
+                )
+
+        common_structures = sorted(common_structures)
+        figures: dict[str, plt.Figure] = {}
+
+        # Extract diffusion data
+        diffusion_values: dict[str, list[float]] = {}
+        diffusion_errors: dict[str, list[float]] = {}
+        relative_differences: dict[str, list[float]] = {}
+
+        for structure in common_structures:
+            diffusion_values[structure] = []
+            diffusion_errors[structure] = []
+
+            for node in nodes:
+                diff_data = node.diffusion[structure]
+                diffusion_values[structure].append(diff_data["mean"])
+                diffusion_errors[structure].append(diff_data["std"])
+
+            # Calculate relative differences (percentage from first node)
+            ref_value = diffusion_values[structure][0]
+            rel_diffs = [
+                100 * (val - ref_value) / ref_value if ref_value != 0 else 0
+                for val in diffusion_values[structure]
+            ]
+            relative_differences[structure] = rel_diffs
+
+        # Get unit from first node, first structure
+        unit = nodes[0].diffusion[common_structures[0]]["unit"]
+
+        # Create diffusion coefficient comparison
+        diff_fig = create_bar_comparison(
+            diffusion_values,
+            diffusion_errors,
+            labels,
+            title="Diffusion Coefficient Comparison",
+            ylabel=f"D / {unit}",
+            use_plotly=use_plotly,
+        )
+        figures["diffusion_coefficients"] = diff_fig
+
+        # Create relative difference plot
+        rel_diff_fig = create_bar_comparison(
+            relative_differences,
+            None,
+            labels,
+            title=f"Relative Differences (vs. {labels[0]})",
+            ylabel="Relative Difference / %",
+            use_plotly=use_plotly,
+        )
+        figures["relative_differences"] = rel_diff_fig
+
+        # Create MSD overlay plots for each structure
+        for structure in common_structures:
+            msd_times = []
+            msd_values = []
+
+            # Load MSD data from each node
+            for node in nodes:
+                try:
+                    safe_structure = sanitize_structure_name(structure)
+                    msd_file = node.data_path / f"{safe_structure}_msd.h5"
+                    dt_file = node.data_path / f"{safe_structure}_dt.h5"
+
+                    if msd_file.exists() and dt_file.exists():
+                        # Load using scipp
+                        msd = sc.io.load_hdf5(msd_file)
+                        dt = sc.io.load_hdf5(dt_file)
+
+                        # Convert time to ps for consistent plotting
+                        dt_ps = sc.to_unit(dt, "ps")
+
+                        msd_times.append(dt_ps.values)
+                        msd_values.append(msd.values)
+                    else:
+                        log.warning(f"MSD data not found for {structure} in {node.name}")
+                        # Use placeholder data
+                        msd_times.append(np.array([0]))
+                        msd_values.append(np.array([0]))
+                except Exception as e:
+                    log.warning(
+                        f"Could not load MSD data for {structure} from {node.name}: {e}"
+                    )
+                    msd_times.append(np.array([0]))
+                    msd_values.append(np.array([0]))
+
+            # Only create plot if we have valid data
+            if all(len(t) > 1 for t in msd_times):
+                msd_fig = create_overlay_plot(
+                    msd_times,
+                    msd_values,
+                    labels,
+                    title=f"MSD Comparison: {structure}",
+                    xlabel="Time / ps",
+                    ylabel="MSD / Å²",
+                    use_plotly=use_plotly,
+                )
+                figures[f"msd_{structure}"] = msd_fig
+
+        return {"figures": figures}
 
     def _compute_diffusion(
         self,

@@ -7,6 +7,8 @@ import scipp as sc
 import zntrack
 from kinisi.arrhenius import Arrhenius
 
+from massband.abc import ComparisonResults
+from massband.comparison_utils import create_bar_comparison
 from massband.diffusion.types import DiffusionData
 from massband.utils import sanitize_structure_name
 
@@ -71,6 +73,148 @@ class KinisiDiffusionArrhenius(zntrack.Node):
 
     activation_energy: dict[str, float] = zntrack.metrics()
     pre_exponential_factor: dict[str, float] = zntrack.metrics()
+
+    @staticmethod
+    def compare(  # noqa: C901
+        *nodes: "KinisiDiffusionArrhenius",
+        labels: list[str] | None = None,
+        structures: list[str] | None = None,
+        use_plotly: bool = False,
+    ) -> ComparisonResults:
+        """Compare Arrhenius parameters from multiple calculations.
+
+        Parameters
+        ----------
+        *nodes : KinisiDiffusionArrhenius
+            Multiple Arrhenius analysis node instances to compare
+        labels : list[str] | None
+            Labels for each node (e.g., ["ML potential", "DFT", "Experiment"]).
+            If None, uses node indices as labels.
+        structures : list[str] | None
+            Specific structures to compare (e.g., ["[Li+]", "EC"]).
+            If None, compares all common structures across all nodes.
+        use_plotly : bool
+            If True, creates plotly figures; otherwise matplotlib.
+
+        Returns
+        -------
+        ComparisonResults
+            Dictionary containing comparative Arrhenius plots with keys:
+            - "activation_energies": bar chart comparing Ea values
+            - "pre_exponential_factors": bar chart comparing A values
+        """
+        if len(nodes) < 2:
+            raise ValueError("At least two nodes are required for comparison")
+
+        # Generate default labels if not provided
+        if labels is None:
+            labels = [node.name if node.name else f"Node {i + 1}" for i, node in enumerate(nodes)]
+        elif len(labels) != len(nodes):
+            raise ValueError(
+                f"Number of labels ({len(labels)}) must match number of nodes ({len(nodes)})"
+            )
+
+        # Find common structures across all nodes
+        common_structures = set(nodes[0].activation_energy.keys())
+        for node in nodes[1:]:
+            common_structures &= set(node.activation_energy.keys())
+
+        if not common_structures:
+            raise ValueError("No common structures found across all nodes")
+
+        # Filter to specific structures if requested
+        if structures is not None:
+            common_structures = set(structures) & common_structures
+            if not common_structures:
+                raise ValueError(
+                    f"None of the requested structures {structures} are common to all nodes"
+                )
+
+        common_structures = sorted(common_structures)
+        figures: dict[str, plt.Figure] = {}
+
+        # Extract Arrhenius parameters
+        ea_values: dict[str, list[float]] = {}
+        ea_errors: dict[str, list[float]] = {}
+        pre_exp_values: dict[str, list[float]] = {}
+        pre_exp_errors: dict[str, list[float]] = {}
+
+        for structure in common_structures:
+            ea_values[structure] = []
+            ea_errors[structure] = []
+            pre_exp_values[structure] = []
+            pre_exp_errors[structure] = []
+
+            for node in nodes:
+                ea_data = node.activation_energy[structure]
+                pef_data = node.pre_exponential_factor[structure]
+
+                ea_values[structure].append(ea_data["mean"])
+                ea_errors[structure].append(ea_data["std"])
+                pre_exp_values[structure].append(pef_data["mean"])
+                pre_exp_errors[structure].append(pef_data["std"])
+
+        # Create activation energy comparison
+        ea_fig = create_bar_comparison(
+            ea_values,
+            ea_errors,
+            labels,
+            title="Activation Energy Comparison",
+            ylabel="Ea / eV",
+            use_plotly=use_plotly,
+        )
+        figures["activation_energies"] = ea_fig
+
+        # Create pre-exponential factor comparison (use log scale for values)
+        # We'll create this manually to handle log scale better
+        if use_plotly:
+            import plotly.graph_objects as go
+
+            fig = go.Figure()
+            categories = list(pre_exp_values.keys())
+
+            for i, label in enumerate(labels):
+                vals = [pre_exp_values[cat][i] for cat in categories]
+                errs = [pre_exp_errors[cat][i] for cat in categories]
+                fig.add_trace(
+                    go.Bar(
+                        name=label,
+                        x=categories,
+                        y=vals,
+                        error_y={"type": "data", "array": errs},
+                    )
+                )
+
+            fig.update_layout(
+                title="Pre-Exponential Factor Comparison",
+                yaxis_title="A / cm²/s",
+                yaxis_type="log",
+                barmode="group",
+            )
+            figures["pre_exponential_factors"] = fig
+        else:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            categories = list(pre_exp_values.keys())
+            x = np.arange(len(categories))
+            width = 0.8 / len(labels)
+
+            for i, label in enumerate(labels):
+                vals = [pre_exp_values[cat][i] for cat in categories]
+                errs = [pre_exp_errors[cat][i] for cat in categories]
+                offset = (i - len(labels) / 2) * width + width / 2
+                ax.bar(x + offset, vals, width, label=label, yerr=errs, capsize=5)
+
+            ax.set_yscale("log")
+            ax.set_ylabel("A / cm²/s")
+            ax.set_title("Pre-Exponential Factor Comparison")
+            ax.set_xticks(x)
+            ax.set_xticklabels(categories, rotation=45, ha="right")
+            ax.legend()
+            ax.grid(True, alpha=0.3, axis="y")
+            plt.tight_layout()
+            figures["pre_exponential_factors"] = fig
+
+        return {"figures": figures}
 
     def run(self):
         self.figures_path.mkdir(parents=True, exist_ok=True)

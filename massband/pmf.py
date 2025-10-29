@@ -10,6 +10,12 @@ import numpy as np
 import pint
 import zntrack
 
+from massband.abc import ComparisonResults
+from massband.comparison_utils import (
+    create_bar_comparison,
+    create_difference_plot,
+    create_overlay_plot,
+)
 from massband.rdf.core import RDFData
 from massband.utils import sanitize_structure_name
 
@@ -69,6 +75,211 @@ class PotentialOfMeanForce(zntrack.Node):
     # Outputs
     pmf: dict[str, PMFResults] = zntrack.outs()
     figures: Path = zntrack.outs_path(zntrack.nwd / "pmf_figures")
+
+    @staticmethod
+    def compare(  # noqa: C901
+        *nodes: "PotentialOfMeanForce",
+        labels: list[str] | None = None,
+        pairs: list[str] | None = None,
+        align_minima: bool = False,
+        use_plotly: bool = False,
+    ) -> ComparisonResults:
+        """Compare PMF curves from multiple calculations.
+
+        Parameters
+        ----------
+        *nodes : PotentialOfMeanForce
+            Multiple PMF node instances to compare
+        labels : list[str] | None
+            Labels for each node (e.g., ["ML potential", "DFT", "Experiment"]).
+            If None, uses node indices as labels.
+        pairs : list[str] | None
+            Specific pairs to compare (e.g., ["Li-F", "Li-Li"]).
+            If None, compares all common pairs across all nodes.
+        align_minima : bool
+            If True, shifts PMF curves vertically to align their first minima.
+        use_plotly : bool
+            If True, creates plotly figures; otherwise matplotlib.
+
+        Returns
+        -------
+        ComparisonResults
+            Dictionary containing comparative PMF plots with keys:
+            - "overlay_{pair}": overlay plot for each pair
+            - "difference_{pair}": difference plot for each pair
+            - "barrier_heights": bar chart comparing energy barriers
+            - "well_depths": bar chart comparing well depths
+            - "minima_positions": bar chart comparing position of first minimum
+        """
+        if len(nodes) < 2:
+            raise ValueError("At least two nodes are required for comparison")
+
+        # Generate default labels if not provided
+        if labels is None:
+            labels = [node.name if node.name else f"Node {i + 1}" for i, node in enumerate(nodes)]
+        elif len(labels) != len(nodes):
+            raise ValueError(
+                f"Number of labels ({len(labels)}) must match number of nodes ({len(nodes)})"
+            )
+
+        # Find common pairs across all nodes
+        common_pairs = set(nodes[0].pmf.keys())
+        for node in nodes[1:]:
+            common_pairs &= set(node.pmf.keys())
+
+        if not common_pairs:
+            raise ValueError("No common pairs found across all nodes")
+
+        # Filter to specific pairs if requested
+        if pairs is not None:
+            common_pairs = set(pairs) & common_pairs
+            if not common_pairs:
+                raise ValueError(
+                    f"None of the requested pairs {pairs} are common to all nodes"
+                )
+
+        common_pairs = sorted(common_pairs)
+        figures: dict[str, plt.Figure] = {}
+
+        # Track statistics for all pairs
+        barrier_heights: dict[str, list[float]] = {}
+        well_depths: dict[str, list[float]] = {}
+        minima_positions: dict[str, list[float]] = {}
+
+        # Compare each pair
+        for pair in common_pairs:
+            # Extract data for this pair from all nodes
+            x_data = []
+            y_data = []
+            uncertainties = []
+
+            for node in nodes:
+                pmf_data = node.pmf[pair]
+                r = np.array(pmf_data["r"])
+                pmf = np.array(pmf_data["pmf"])
+
+                # Handle alignment if requested
+                if align_minima:
+                    # Find first minimum (where r > 1.0)
+                    finite_mask = np.isfinite(pmf) & (r > 1.0)
+                    if np.any(finite_mask):
+                        min_val = np.nanmin(pmf[finite_mask])
+                        pmf = pmf - min_val  # Shift to align minima at 0
+
+                x_data.append(r)
+                y_data.append(pmf)
+
+                # Get uncertainties if available
+                if pmf_data.get("pmf_std") is not None:
+                    uncertainties.append(np.array(pmf_data["pmf_std"]))
+                else:
+                    uncertainties.append(None)
+
+            # Create overlay plot
+            unit = nodes[0].pmf[pair]["unit"]
+            overlay_title = f"PMF Comparison: {pair}"
+            if align_minima:
+                overlay_title += " (aligned at first minimum)"
+
+            overlay_fig = create_overlay_plot(
+                x_data,
+                y_data,
+                labels,
+                title=overlay_title,
+                xlabel="r / Å",
+                ylabel=f"PMF / {unit}",
+                uncertainties=uncertainties,
+                use_plotly=use_plotly,
+            )
+            figures[f"overlay_{pair}"] = overlay_fig
+
+            # Create difference plot (if x-grids are compatible)
+            try:
+                diff_fig = create_difference_plot(
+                    x_data,
+                    y_data,
+                    labels,
+                    title=f"PMF Differences: {pair}",
+                    xlabel="r / Å",
+                    ylabel=f"ΔPMF / {unit}",
+                    reference_idx=0,
+                    use_plotly=use_plotly,
+                )
+                figures[f"difference_{pair}"] = diff_fig
+            except Exception as e:
+                log.warning(f"Could not create difference plot for {pair}: {e}")
+
+            # Extract statistics
+            barrier_heights[pair] = []
+            well_depths[pair] = []
+            minima_positions[pair] = []
+
+            for r, pmf in zip(x_data, y_data):
+                # Only consider finite values where r > 1.0
+                finite_mask = np.isfinite(pmf) & (r > 1.0)
+
+                if np.any(finite_mask):
+                    r_valid = r[finite_mask]
+                    pmf_valid = pmf[finite_mask]
+
+                    # Find first minimum
+                    min_idx = np.argmin(pmf_valid)
+                    min_pos = r_valid[min_idx]
+                    min_val = pmf_valid[min_idx]
+
+                    minima_positions[pair].append(min_pos)
+                    well_depths[pair].append(min_val)
+
+                    # Find first maximum after minimum (barrier)
+                    if min_idx < len(pmf_valid) - 1:
+                        max_idx = min_idx + np.argmax(pmf_valid[min_idx:])
+                        if max_idx > min_idx:
+                            barrier = pmf_valid[max_idx] - min_val
+                            barrier_heights[pair].append(barrier)
+                        else:
+                            barrier_heights[pair].append(np.nan)
+                    else:
+                        barrier_heights[pair].append(np.nan)
+                else:
+                    barrier_heights[pair].append(np.nan)
+                    well_depths[pair].append(np.nan)
+                    minima_positions[pair].append(np.nan)
+
+        # Create summary bar charts
+        if barrier_heights:
+            barrier_fig = create_bar_comparison(
+                barrier_heights,
+                None,
+                labels,
+                title="Energy Barrier Heights",
+                ylabel=f"Barrier / {unit}",
+                use_plotly=use_plotly,
+            )
+            figures["barrier_heights"] = barrier_fig
+
+        if well_depths:
+            well_fig = create_bar_comparison(
+                well_depths,
+                None,
+                labels,
+                title="Well Depths",
+                ylabel=f"Well Depth / {unit}",
+                use_plotly=use_plotly,
+            )
+            figures["well_depths"] = well_fig
+
+        if minima_positions:
+            minima_fig = create_bar_comparison(
+                minima_positions,
+                None,
+                labels,
+                title="First Minimum Positions",
+                ylabel="r / Å",
+                use_plotly=use_plotly,
+            )
+            figures["minima_positions"] = minima_fig
+
+        return {"figures": figures}
 
     def _calculate_pmf(
         self,

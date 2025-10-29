@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import pint
+import plotly.graph_objects as go
 import rdkit2ase
 import znh5md
 import zntrack
@@ -24,6 +25,12 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
+from massband.abc import ComparisonResults
+from massband.comparison_utils import (
+    create_bar_comparison,
+    create_difference_plot,
+    create_overlay_plot,
+)
 from massband.utils import sanitize_structure_name
 
 log = logging.getLogger(__name__)
@@ -586,6 +593,203 @@ class RadialDistributionFunction(zntrack.Node):
     rdf: dict[str, RDFData] = zntrack.outs()
     figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
     data_path: Path = zntrack.outs_path(zntrack.nwd / "data")
+
+    @staticmethod
+    def compare(  # noqa: C901
+        *nodes: "RadialDistributionFunction",
+        labels: list[str] | None = None,
+        pairs: list[str] | None = None,
+        use_plotly: bool = False,
+    ) -> ComparisonResults:
+        """Compare RDFs from multiple calculations.
+
+        Parameters
+        ----------
+        *nodes : RadialDistributionFunction
+            Multiple RDF node instances to compare
+        labels : list[str] | None
+            Labels for each node (e.g., ["ML potential", "DFT", "Experiment"]).
+            If None, uses node indices as labels.
+        pairs : list[str] | None
+            Specific pairs to compare (e.g., ["Li-Li", "F-F"]).
+            If None, compares all common pairs across all nodes.
+        use_plotly : bool
+            If True, creates plotly figures; otherwise matplotlib.
+
+        Returns
+        -------
+        ComparisonResults
+            Dictionary containing comparative RDF plots with keys:
+            - "overlay_{pair}": overlay plot for each pair
+            - "difference_{pair}": difference plot for each pair
+            - "peak_positions": bar chart comparing first peak positions
+            - "peak_heights": bar chart comparing first peak heights
+            - "coordination_numbers": bar chart comparing coordination numbers
+        """
+        if len(nodes) < 2:
+            raise ValueError("At least two nodes are required for comparison")
+
+        # Generate default labels if not provided
+        if labels is None:
+            labels = [node.name if node.name else f"Node {i + 1}" for i, node in enumerate(nodes)]
+        elif len(labels) != len(nodes):
+            raise ValueError(
+                f"Number of labels ({len(labels)}) must match number of nodes ({len(nodes)})"
+            )
+
+        # Find common pairs across all nodes
+        common_pairs = set(nodes[0].rdf.keys())
+        for node in nodes[1:]:
+            common_pairs &= set(node.rdf.keys())
+
+        if not common_pairs:
+            raise ValueError("No common pairs found across all nodes")
+
+        # Filter to specific pairs if requested
+        if pairs is not None:
+            common_pairs = set(pairs) & common_pairs
+            if not common_pairs:
+                raise ValueError(
+                    f"None of the requested pairs {pairs} are common to all nodes"
+                )
+
+        common_pairs = sorted(common_pairs)
+        figures: dict[str, plt.Figure | go.Figure] = {}
+
+        # Track peak statistics for all pairs
+        peak_positions: dict[str, list[float]] = {}
+        peak_heights: dict[str, list[float]] = {}
+        coordination_numbers: dict[str, list[float]] = {}
+
+        # Compare each pair
+        for pair in common_pairs:
+            # Extract data for this pair from all nodes
+            x_data = []
+            y_data = []
+            uncertainties = []
+
+            for node in nodes:
+                rdf_data = node.rdf[pair]
+                x = np.array(rdf_data["bin_centers"])
+                y = np.array(rdf_data["g_r"])
+                x_data.append(x)
+                y_data.append(y)
+
+                # Get uncertainties if available
+                if rdf_data.get("g_r_std") is not None:
+                    uncertainties.append(np.array(rdf_data["g_r_std"]))
+                else:
+                    uncertainties.append(None)
+
+            # Create overlay plot
+            unit = nodes[0].rdf[pair]["unit"]
+            overlay_fig = create_overlay_plot(
+                x_data,
+                y_data,
+                labels,
+                title=f"RDF Comparison: {pair}",
+                xlabel=f"r / {unit}",
+                ylabel="g(r)",
+                uncertainties=uncertainties,
+                use_plotly=use_plotly,
+            )
+            figures[f"overlay_{pair}"] = overlay_fig
+
+            # Create difference plot (if x-grids are compatible)
+            try:
+                diff_fig = create_difference_plot(
+                    x_data,
+                    y_data,
+                    labels,
+                    title=f"RDF Differences: {pair}",
+                    xlabel=f"r / {unit}",
+                    ylabel="Δg(r)",
+                    reference_idx=0,
+                    use_plotly=use_plotly,
+                )
+                figures[f"difference_{pair}"] = diff_fig
+            except Exception as e:
+                log.warning(f"Could not create difference plot for {pair}: {e}")
+
+            # Extract peak statistics
+            peak_positions[pair] = []
+            peak_heights[pair] = []
+            coordination_numbers[pair] = []
+
+            for i, (x, y) in enumerate(zip(x_data, y_data)):
+                # Find first peak (exclude r < 1.0 to avoid artifacts)
+                mask = x > 1.0
+                if np.any(mask):
+                    x_valid = x[mask]
+                    y_valid = y[mask]
+                    peak_idx = np.argmax(y_valid)
+                    peak_positions[pair].append(x_valid[peak_idx])
+                    peak_heights[pair].append(y_valid[peak_idx])
+
+                    # Estimate coordination number (integrate first peak)
+                    # Find first minimum after peak
+                    try:
+                        min_idx = peak_idx + np.argmin(y_valid[peak_idx:])
+                        if min_idx > peak_idx:
+                            # Simple trapezoidal integration
+                            r_cut = x_valid[min_idx]
+                            mask_int = x <= r_cut
+                            r_int = x[mask_int]
+                            g_int = y[mask_int]
+
+                            # CN = 4π * ρ * ∫ r² g(r) dr
+                            density_a = nodes[i].rdf[pair]["number_density_a"]
+                            density_b = nodes[i].rdf[pair]["number_density_b"]
+                            # Use geometric mean of densities
+                            rho = np.sqrt(density_a * density_b)
+
+                            integrand = r_int**2 * g_int
+                            cn = 4 * np.pi * rho * np.trapz(integrand, r_int)
+                            coordination_numbers[pair].append(cn)
+                        else:
+                            coordination_numbers[pair].append(np.nan)
+                    except Exception:
+                        coordination_numbers[pair].append(np.nan)
+                else:
+                    peak_positions[pair].append(np.nan)
+                    peak_heights[pair].append(np.nan)
+                    coordination_numbers[pair].append(np.nan)
+
+        # Create summary bar charts
+        if peak_positions:
+            peak_pos_fig = create_bar_comparison(
+                peak_positions,
+                None,
+                labels,
+                title="First Peak Positions",
+                ylabel=f"r / {unit}",
+                use_plotly=use_plotly,
+            )
+            figures["peak_positions"] = peak_pos_fig
+
+        if peak_heights:
+            peak_height_fig = create_bar_comparison(
+                peak_heights,
+                None,
+                labels,
+                title="First Peak Heights",
+                ylabel="g(r)",
+                use_plotly=use_plotly,
+            )
+            figures["peak_heights"] = peak_height_fig
+
+        if coordination_numbers:
+            cn_fig = create_bar_comparison(
+                coordination_numbers,
+                None,
+                labels,
+                title="Coordination Numbers (First Shell)",
+                ylabel="CN",
+                use_plotly=use_plotly,
+            )
+            figures["coordination_numbers"] = cn_fig
+
+        return {"figures": figures}
 
     def run(self):
         """Executes the RDF calculation workflow."""

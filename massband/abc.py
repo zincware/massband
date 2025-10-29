@@ -1,12 +1,10 @@
 import typing as t
 
-import ase
+import matplotlib.figure
 import plotly.graph_objects as go
 
-FIGURES = dict[str, go.Figure]
-FRAMES = list[ase.Atoms]
+FIGURES = dict[str, go.Figure | matplotlib.figure.Figure]
 
 
 class ComparisonResults(t.TypedDict):
-    frames: FRAMES
     figures: FIGURES
