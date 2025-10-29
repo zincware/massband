@@ -8,6 +8,7 @@ import zntrack
 from kinisi.arrhenius import Arrhenius
 
 from massband.diffusion.types import DiffusionData
+from massband.utils import sanitize_structure_name
 
 
 class KinisiConductivityArrhenius(zntrack.Node):
@@ -174,6 +175,7 @@ class KinisiConductivityArrhenius(zntrack.Node):
         return converted_data
 
     def _plot_arrhenius(self, td, s, structure: str) -> None:
+        safe_structure = sanitize_structure_name(structure)
         """Create Arrhenius plot with credible intervals and legend."""
         credible_intervals = [[16, 84], [2.5, 97.5], [0.15, 99.85]]
         alpha = [0.6, 0.4, 0.2]
@@ -243,5 +245,7 @@ class KinisiConductivityArrhenius(zntrack.Node):
 
         # Save figure
         fig.savefig(
-            self.figures_path / f"arrhenius_{structure}.png", dpi=300, bbox_inches="tight"
+            self.figures_path / f"arrhenius_{safe_structure}.png",
+            dpi=300,
+            bbox_inches="tight",
         )

@@ -11,6 +11,8 @@ import zntrack
 from kinisi.analyze import ConductivityAnalyzer
 from rdkit import Chem
 
+from massband.utils import sanitize_structure_name
+
 log = logging.getLogger(__name__)
 
 
@@ -203,9 +205,10 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             }
         }
 
-        cond.mscd.save_hdf5(self.data_path / f"{structure}_msd.h5")
-        cond.dt.save_hdf5(self.data_path / f"{structure}_dt.h5")
+        safe_structure = sanitize_structure_name(structure)
+        cond.mscd.save_hdf5(self.data_path / f"{safe_structure}_msd.h5")
+        cond.dt.save_hdf5(self.data_path / f"{safe_structure}_dt.h5")
         np.save(
-            self.data_path / f"{structure}_distributions.npy",
+            self.data_path / f"{safe_structure}_distributions.npy",
             cond.distributions,
         )

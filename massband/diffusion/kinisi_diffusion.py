@@ -16,6 +16,7 @@ import zntrack
 from kinisi.analyze import DiffusionAnalyzer
 
 from massband.diffusion.types import DiffusionData
+from massband.utils import sanitize_structure_name
 
 log = logging.getLogger(__name__)
 
@@ -148,17 +149,19 @@ class KinisiSelfDiffusion(zntrack.Node):
         return diff
 
     def _save_diff(self, diff: DiffusionAnalyzer, structure: str) -> None:
-        diff.msd.save_hdf5(self.data_path / f"{structure}_msd.h5")
+        safe_structure = sanitize_structure_name(structure)
+        diff.msd.save_hdf5(self.data_path / f"{safe_structure}_msd.h5")
         diff.D._to_datagroup().save_hdf5(
-            self.data_path / f"{structure}_D.h5"
+            self.data_path / f"{safe_structure}_D.h5"
         )  # this is not being saved!
-        diff.dt.save_hdf5(self.data_path / f"{structure}_dt.h5")
+        diff.dt.save_hdf5(self.data_path / f"{safe_structure}_dt.h5")
         np.save(
-            self.data_path / f"{structure}_distributions.npy",
+            self.data_path / f"{safe_structure}_distributions.npy",
             diff.distributions,
         )
 
     def _plot(self, diff: DiffusionAnalyzer, structure: str) -> None:
+        safe_structure = sanitize_structure_name(structure)
         d_mean = sc.mean(diff.D).value
         d_std = sc.std(diff.D, ddof=1).value
 
@@ -205,7 +208,7 @@ class KinisiSelfDiffusion(zntrack.Node):
         ax.legend()
         ax.set_title(f"{structure} MSD credible intervals")
         fig.savefig(
-            self.figures_path / f"{structure}_msd.png", dpi=300, bbox_inches="tight"
+            self.figures_path / f"{safe_structure}_msd.png", dpi=300, bbox_inches="tight"
         )
 
         # --- Histogram plot ---
@@ -246,7 +249,7 @@ class KinisiSelfDiffusion(zntrack.Node):
         ax.legend()
         ax.set_title(f"{structure} Diffusion Coefficient Distribution")
         fig.savefig(
-            self.figures_path / f"{structure}_D_histogram.png",
+            self.figures_path / f"{safe_structure}_D_histogram.png",
             dpi=300,
             bbox_inches="tight",
         )

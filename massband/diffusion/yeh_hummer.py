@@ -7,6 +7,7 @@ import zntrack
 from kinisi.yeh_hummer import YehHummer as KinisiYehHummerAnalyzer
 
 from massband.diffusion.types import DiffusionData
+from massband.utils import sanitize_structure_name
 
 
 class KinisiYehHummer(zntrack.Node):
@@ -115,7 +116,8 @@ class KinisiYehHummer(zntrack.Node):
             yh.mcmc()
 
             # Save MCMC samples
-            yh.data_group.save_hdf5(self.data_path / f"{structure}_mcmc_samples.h5")
+            safe_structure = sanitize_structure_name(structure)
+            yh.data_group.save_hdf5(self.data_path / f"{safe_structure}_mcmc_samples.h5")
 
             # Store summary statistics as DiffusionData
             D_infinite_std = float(sc.std(yh.D_infinite, ddof=1).value)
@@ -142,6 +144,7 @@ class KinisiYehHummer(zntrack.Node):
 
     def _plot_yeh_hummer(self, yh: KinisiYehHummerAnalyzer, structure: str) -> None:
         """Create Yeh-Hummer plot with credible intervals."""
+        safe_structure = sanitize_structure_name(structure)
         fig, ax = plt.subplots()
 
         credible_intervals = [[16, 84], [2.5, 97.5], [0.15, 99.85]]
@@ -185,5 +188,7 @@ class KinisiYehHummer(zntrack.Node):
         ax.set_ylabel(f"D  / {yh.diffusion.unit}")
         ax.set_title(f"Yeh-Hummer Analysis: {structure}")
 
-        fig.savefig(self.figures_path / f"{structure}.png", dpi=300, bbox_inches="tight")
+        fig.savefig(
+            self.figures_path / f"{safe_structure}.png", dpi=300, bbox_inches="tight"
+        )
         plt.close(fig)

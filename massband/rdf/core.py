@@ -24,6 +24,8 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
+from massband.utils import sanitize_structure_name
+
 log = logging.getLogger(__name__)
 
 
@@ -742,6 +744,7 @@ class RadialDistributionFunction(zntrack.Node):
                     continue
 
                 pair_key = f"{struct_a}-{struct_b}"
+                safe_pair_key = sanitize_structure_name(pair_key)
                 pos_a = particle_positions[struct_a]
                 pos_b = particle_positions[struct_b]
 
@@ -798,7 +801,7 @@ class RadialDistributionFunction(zntrack.Node):
                 progress.update(current_task, visible=False)
 
                 # --- Save Data and Metrics ---
-                data_file = self.data_path / f"rdf_{pair_key}.txt"
+                data_file = self.data_path / f"rdf_{safe_pair_key}.txt"
                 if use_uncertainty:
                     assert g_r_std_np is not None
                     assert g_r_ensemble_np is not None
@@ -809,7 +812,7 @@ class RadialDistributionFunction(zntrack.Node):
                         header=f"r ({position_unit:~P}), g(r), g(r)_std",
                     )
                     # Save full ensemble data separately
-                    ensemble_file = self.data_path / f"rdf_{pair_key}_ensemble.txt"
+                    ensemble_file = self.data_path / f"rdf_{safe_pair_key}_ensemble.txt"
                     np.savetxt(
                         ensemble_file,
                         g_r_ensemble_np.T,
@@ -858,7 +861,7 @@ class RadialDistributionFunction(zntrack.Node):
                 plt.grid(True, linestyle="--", alpha=0.6)
                 plt.legend()
                 plt.tight_layout()
-                plt.savefig(self.figures_path / f"rdf_{pair_key}.png", dpi=300)
+                plt.savefig(self.figures_path / f"rdf_{safe_pair_key}.png", dpi=300)
                 plt.close()
 
                 # Update overall progress

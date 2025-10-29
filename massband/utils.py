@@ -1,6 +1,64 @@
+import hashlib
+
 import jax.numpy as jnp
 import numpy as np
 from jax import jit
+
+
+def sanitize_structure_name(structure: str, max_length: int = 8) -> str:
+    """Convert structure name (e.g., SMILES) to filesystem-safe filename.
+
+    Uses a hybrid approach:
+    - Sanitizes unsafe filesystem characters by replacing them with underscores
+    - Truncates to max_length if needed
+    - Appends 8-character hash suffix only if modified or truncated
+
+    Parameters
+    ----------
+    structure : str
+        Structure identifier (e.g., SMILES string) to sanitize
+    max_length : int, default 8
+        Maximum length for the sanitized string (before hash suffix if needed)
+
+    Returns
+    -------
+    str
+        Sanitized filesystem-safe string, with hash suffix if modified
+
+    Examples
+    --------
+    >>> sanitize_structure_name("CCO")
+    'CCO'
+    >>> sanitize_structure_name("CC(C)C")
+    'C_C_C_a3f8b12d'
+    >>> sanitize_structure_name("C" * 20)
+    'CCCCCCCC_48ecc9d3'
+    """
+    # Characters that are unsafe for filenames across different filesystems
+    # Also includes '-' for consistency with existing code patterns
+    unsafe_chars = r'\/|:*?"<>()[]{}+=!@#$%^&-'
+
+    # Replace unsafe characters with underscores
+    sanitized = structure
+    for char in unsafe_chars:
+        sanitized = sanitized.replace(char, "_")
+
+    # Also replace spaces
+    sanitized = sanitized.replace(" ", "_")
+
+    # Check if structure was modified or needs truncation
+    needs_hash = (sanitized != structure) or (len(sanitized) > max_length)
+
+    # Truncate if needed
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length]
+
+    # Add hash suffix only if the structure was modified or truncated
+    if needs_hash:
+        hash_suffix = hashlib.md5(structure.encode("utf-8")).hexdigest()[:8]
+        return f"{sanitized}_{hash_suffix}"
+
+    return sanitized
 
 
 def _validate_unwrap_inputs(

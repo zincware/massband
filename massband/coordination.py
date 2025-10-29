@@ -11,6 +11,7 @@ from scipy.ndimage import uniform_filter1d
 from scipy.signal import argrelmin
 
 from massband.rdf import RadialDistributionFunction
+from massband.utils import sanitize_structure_name
 
 log = logging.getLogger(__name__)
 
@@ -153,7 +154,7 @@ class CoordinationNumber(zntrack.Node):
         ax2.set_xlim(0, min(np.max(r), 15))
         ax2.set_ylim(0, max(coordination_number * 2.5, 5))
 
-        safe_pair_name = pair_name.replace("|", "_").replace("-", "_").replace(" ", "_")
+        safe_pair_name = sanitize_structure_name(pair_name)
         save_path = self.figures / f"coordination_{safe_pair_name}.png"
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close(fig)

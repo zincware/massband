@@ -8,6 +8,7 @@ from .diffusion import KinisiDiffusionArrhenius, KinisiSelfDiffusion, KinisiYehH
 from .pmf import PotentialOfMeanForce
 from .radius_of_gyration import RadiusOfGyration
 from .rdf import RadialDistributionFunction
+from .utils import sanitize_structure_name
 
 __all__ = [
     "RadialDistributionFunction",
@@ -20,4 +21,5 @@ __all__ = [
     "RadiusOfGyration",
     "NernstEinsteinIonicConductivity",
     "KinisiEinsteinHelfandIonicConductivity",
+    "sanitize_structure_name",
 ]

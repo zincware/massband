@@ -20,6 +20,8 @@ from rich.progress import (
 )
 from scipy.signal import correlate
 
+from massband.utils import sanitize_structure_name
+
 log = logging.getLogger(__name__)
 
 
@@ -216,6 +218,7 @@ class RadiusOfGyration(zntrack.Node):
             )
 
             for structure, mol_indices in molecules.items():
+                safe_structure = sanitize_structure_name(structure)
                 molecule_masses = masses[structure]
                 total_mass = np.sum(molecule_masses)
                 rog_time_series = []
@@ -309,7 +312,7 @@ class RadiusOfGyration(zntrack.Node):
                         "ROG": rog_time_series,
                     }
                 )
-                df.to_csv(self.data_path / f"{structure}_rog.csv", index=False)
+                df.to_csv(self.data_path / f"{safe_structure}_rog.csv", index=False)
 
                 # Save ensemble data if available
                 if use_uncertainty and rog_ensemble_values is not None:
@@ -320,7 +323,7 @@ class RadiusOfGyration(zntrack.Node):
                         }
                     )
                     ensemble_df.to_csv(
-                        self.data_path / f"{structure}_rog_ensemble.csv", index=False
+                        self.data_path / f"{safe_structure}_rog_ensemble.csv", index=False
                     )
 
                 # Compute time-series statistics (backward compatibility)
@@ -391,7 +394,9 @@ class RadiusOfGyration(zntrack.Node):
                 plt.legend()
                 plt.grid(True, linestyle="--", alpha=0.6)
                 plt.tight_layout()
-                plt.savefig(self.figures_path / f"{structure}_rog_vs_time.png", dpi=300)
+                plt.savefig(
+                    self.figures_path / f"{safe_structure}_rog_vs_time.png", dpi=300
+                )
                 plt.close()
 
                 # 2. ROG distribution
@@ -444,7 +449,7 @@ class RadiusOfGyration(zntrack.Node):
                 plt.grid(True, linestyle="--", alpha=0.6)
                 plt.tight_layout()
                 plt.savefig(
-                    self.figures_path / f"{structure}_rog_distribution.png", dpi=300
+                    self.figures_path / f"{safe_structure}_rog_distribution.png", dpi=300
                 )
                 plt.close()
 
@@ -470,7 +475,7 @@ class RadiusOfGyration(zntrack.Node):
                 plt.axhline(0, color="gray", linestyle="--")
                 plt.grid(True, linestyle="--", alpha=0.6)
                 plt.tight_layout()
-                plt.savefig(self.figures_path / f"{structure}_rog_acf.png", dpi=300)
+                plt.savefig(self.figures_path / f"{safe_structure}_rog_acf.png", dpi=300)
                 plt.close()
 
                 # 4. Ensemble spread plot (if uncertainties enabled)
@@ -515,7 +520,7 @@ class RadiusOfGyration(zntrack.Node):
                     plt.grid(True, linestyle="--", alpha=0.6, axis="y")
                     plt.tight_layout()
                     plt.savefig(
-                        self.figures_path / f"{structure}_rog_ensemble.png", dpi=300
+                        self.figures_path / f"{safe_structure}_rog_ensemble.png", dpi=300
                     )
                     plt.close()
 

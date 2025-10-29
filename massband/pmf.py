@@ -11,6 +11,7 @@ import pint
 import zntrack
 
 from massband.rdf.core import RDFData
+from massband.utils import sanitize_structure_name
 
 log = logging.getLogger(__name__)
 
@@ -294,7 +295,7 @@ class PotentialOfMeanForce(zntrack.Node):
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(left=0, right=min(np.max(r, initial=15), 15))
 
-        safe_pair_name = pair_name.replace("|", "_").replace("-", "_").replace(" ", "_")
+        safe_pair_name = sanitize_structure_name(pair_name)
         save_path = self.figures / f"pmf_{safe_pair_name}.png"
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
