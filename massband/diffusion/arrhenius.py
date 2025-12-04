@@ -108,7 +108,10 @@ class KinisiDiffusionArrhenius(zntrack.Node):
 
         # Generate default labels if not provided
         if labels is None:
-            labels = [node.name if node.name else f"Node {i + 1}" for i, node in enumerate(nodes)]
+            labels = [
+                node.name if node.name else f"Node {i + 1}"
+                for i, node in enumerate(nodes)
+            ]
         elif len(labels) != len(nodes):
             raise ValueError(
                 f"Number of labels ({len(labels)}) must match number of nodes ({len(nodes)})"
