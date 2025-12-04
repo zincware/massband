@@ -1,7 +1,5 @@
 """Utility functions for comparing node results."""
 
-import typing as t
-
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
@@ -135,7 +133,9 @@ def create_overlay_plot(
     if use_plotly:
         fig = go.Figure()
         for x, y, label, unc in zip(x_data, y_data, labels, uncertainties):
-            fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=label, line={"width": 2}))
+            fig.add_trace(
+                go.Scatter(x=x, y=y, mode="lines", name=label, line={"width": 2})
+            )
 
             if unc is not None:
                 # Add uncertainty band
@@ -217,7 +217,12 @@ def create_difference_plot(
                 continue
             diff = y - y_ref
             fig.add_trace(
-                go.Scatter(x=x_common, y=diff, mode="lines", name=f"{label} - {labels[reference_idx]}")
+                go.Scatter(
+                    x=x_common,
+                    y=diff,
+                    mode="lines",
+                    name=f"{label} - {labels[reference_idx]}",
+                )
             )
 
         fig.add_hline(y=0, line_dash="dash", line_color="gray")
