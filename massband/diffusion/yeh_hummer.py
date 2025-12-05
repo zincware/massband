@@ -23,9 +23,9 @@ class KinisiYehHummer(zntrack.Node):
         names to their DiffusionData at that box size.
     temperature : float
         Simulation temperature in Kelvin.
-    D_infinite_bound : tuple[float, float]
+    D_infinite_bound : tuple[float, float], optional
         Lower and upper bounds for infinite-size diffusion coefficient prior in cm^2/s.
-    viscosity_bound : tuple[float, float]
+    viscosity_bound : tuple[float, float], optional
         Lower and upper bounds for viscosity prior in mPa*s.
 
     Attributes
@@ -47,8 +47,8 @@ class KinisiYehHummer(zntrack.Node):
 
     data: list[dict[str, DiffusionData]] = zntrack.deps()
     temperature: float = zntrack.params()
-    D_infinite_bound: tuple[float, float] = zntrack.params()
-    viscosity_bound: tuple[float, float] = zntrack.params()
+    D_infinite_bound: tuple[float, float] | None = zntrack.params(None)
+    viscosity_bound: tuple[float, float] | None = zntrack.params(None)
 
     figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
     data_path: Path = zntrack.outs_path(zntrack.nwd / "data")
@@ -114,18 +114,20 @@ class KinisiYehHummer(zntrack.Node):
                 },
             )
 
-            # Create kinisi YehHummer object with bounds
+            # Create kinisi YehHummer object
             temp = sc.scalar(value=self.temperature, unit="K")
-            bounds = (
-                (
-                    self.D_infinite_bound[0] * sc.Unit("cm^2/s"),
-                    self.D_infinite_bound[1] * sc.Unit("cm^2/s"),
-                ),
-                (
-                    self.viscosity_bound[0] * sc.Unit("mPa*s"),
-                    self.viscosity_bound[1] * sc.Unit("mPa*s"),
-                ),
-            )
+            bounds = None
+            if self.D_infinite_bound is not None and self.viscosity_bound is not None:
+                bounds = (
+                    (
+                        self.D_infinite_bound[0] * sc.Unit("cm^2/s"),
+                        self.D_infinite_bound[1] * sc.Unit("cm^2/s"),
+                    ),
+                    (
+                        self.viscosity_bound[0] * sc.Unit("mPa*s"),
+                        self.viscosity_bound[1] * sc.Unit("mPa*s"),
+                    ),
+                )
             yh = KinisiYehHummerAnalyzer(td, temperature=temp, bounds=bounds)
 
             # Run MCMC
