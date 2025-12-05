@@ -1,6 +1,6 @@
 [project]
 name = "massband"
-version = "0.1.4"
+dynamic = ["version"]
 description = "Molecular dynamics post-processing and analysis package"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,11 +28,17 @@ license = "MIT"
 cuda = ["jax[cuda]"]
 
 [build-system]
-requires = ["uv_build>=0.8.18,<0.9.0"]
-build-backend = "uv_build"
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
 
-[tool.uv.build-backend]
-module-root = ""
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build]
+skip-excluded-dirs = true
+
+[tool.hatch.build.hooks.vcs]
+version-file = "massband/_version.py"
 
 [tool.uv.sources]
 kinisi = { git = "https://github.com/PythonFZ/kinisi", rev = "multi-species-update" }

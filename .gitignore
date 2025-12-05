@@ -190,3 +190,6 @@ tmp/
 *.h5
 *.png
 /data
+
+# hatch-vcs generated version file
+massband/_version.py
