@@ -41,7 +41,7 @@ skip-excluded-dirs = true
 version-file = "massband/_version.py"
 
 [tool.uv.sources]
-kinisi = { git = "https://github.com/PythonFZ/kinisi", rev = "multi-species-update" }
+kinisi = { path = "/data/fzills/tools/kinisi", editable = true }
 
 [dependency-groups]
 dev = [
