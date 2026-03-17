@@ -290,7 +290,9 @@ class KinisiDiffusionArrhenius(zntrack.Node):
             if reference_data is not None and structure in reference_data:
                 ref = reference_data[structure]
                 # Create DataArray with assumed uncertainty
-                ref_variances = (ref["diffusion"] * self.reference_relative_uncertainty) ** 2
+                ref_variances = (
+                    ref["diffusion"] * self.reference_relative_uncertainty
+                ) ** 2
                 td_ref = sc.DataArray(
                     data=sc.array(
                         dims=["temperature"],
@@ -380,7 +382,11 @@ class KinisiDiffusionArrhenius(zntrack.Node):
         fig, ax = plt.subplots(figsize=(8, 6))
 
         # Plot reference fit CI first (behind everything) if available
-        if s_ref is not None and reference_data is not None and structure in reference_data:
+        if (
+            s_ref is not None
+            and reference_data is not None
+            and structure in reference_data
+        ):
             ref_temps = reference_data[structure]["temperatures"]
             for i, (ci, sigma) in enumerate(zip(credible_intervals, sigmas)):
                 label = f"Ref. ±{sigma}σ" if i == 0 else None
@@ -587,7 +593,9 @@ class KinisiDiffusionVTF(zntrack.Node):
             if reference_data is not None and structure in reference_data:
                 ref = reference_data[structure]
                 # Create DataArray with assumed uncertainty
-                ref_variances = (ref["diffusion"] * self.reference_relative_uncertainty) ** 2
+                ref_variances = (
+                    ref["diffusion"] * self.reference_relative_uncertainty
+                ) ** 2
                 td_ref = sc.DataArray(
                     data=sc.array(
                         dims=["temperature"],
@@ -685,7 +693,11 @@ class KinisiDiffusionVTF(zntrack.Node):
         fig, ax = plt.subplots(figsize=(8, 6))
 
         # Plot reference fit CI first (behind everything) if available
-        if s_ref is not None and reference_data is not None and structure in reference_data:
+        if (
+            s_ref is not None
+            and reference_data is not None
+            and structure in reference_data
+        ):
             ref_temps = reference_data[structure]["temperatures"]
             for i, (ci, sigma) in enumerate(zip(credible_intervals, sigmas)):
                 label = f"Ref. ±{sigma}σ" if i == 0 else None

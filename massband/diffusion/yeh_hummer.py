@@ -183,14 +183,15 @@ class KinisiYehHummer(zntrack.Node):
         )
 
         D_0_samples = yh.data_group["D_0"].values
-        slope_samples = yh.data_group["slope"].values
-        n_samples = len(D_0_samples)
-        predictions_extended = np.zeros((len(inv_L_extended), n_samples))
-
-        for i in range(n_samples):
-            predictions_extended[:, i] = yh.yeh_hummer_linear(
-                inv_L_extended, D_0_samples[i], slope_samples[i]
-            )
+        viscosity_samples = yh.data_group["viscosity"].values
+        # D_PBC = D_0 - correction_factor / (eta * L) = D_0 - (correction_factor * inv_L) / eta
+        L_extended = 1.0 / inv_L_extended[1:]  # skip inv_L=0 to avoid division by zero
+        predictions_extended = D_0_samples[np.newaxis, :] - yh._correction_factor / (
+            viscosity_samples[np.newaxis, :] * L_extended[:, np.newaxis]
+        )
+        # Prepend the inv_L=0 point: D_PBC(L=inf) = D_0
+        predictions_at_zero = D_0_samples[np.newaxis, :]
+        predictions_extended = np.vstack([predictions_at_zero, predictions_extended])
 
         for i, ci in enumerate(credible_intervals):
             ax.fill_between(

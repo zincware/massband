@@ -46,6 +46,13 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
         Minimum time interval for conductivity coefficient fitting in femtoseconds.
     temperature : float
         System temperature in Kelvin for conductivity calculation.
+    cond_max : float, default=1e16
+        Maximum condition number for the covariance matrix. Lower values
+        regularize the fit, producing wider (less overconfident) credible intervals.
+    recondition : bool, default=False
+        Use Marchenko-Pastur eigenvalue clipping to recondition the covariance
+        matrix. Recommended for conductivity where few independent samples lead
+        to overconfident fits.
 
     Attributes
     ----------
@@ -94,6 +101,8 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     dt: tuple[float, float, float] | None = zntrack.params(None)
     start_dt: float = zntrack.params()  # in fs
     temperature: float = zntrack.params()  # in K
+    cond_max: float = zntrack.params(1e16)
+    recondition: bool = zntrack.params(False)
 
     conductivity: dict[str, dict[str, float | str]] = zntrack.metrics()
 
@@ -158,6 +167,8 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
         cond.conductivity(
             start_dt=start_dt,
             temperature=self.temperature * sc.Unit("K"),
+            cond_max=self.cond_max,
+            recondition=self.recondition,
         )
 
         credible_intervals = [[16, 84], [2.5, 97.5], [0.15, 99.85]]

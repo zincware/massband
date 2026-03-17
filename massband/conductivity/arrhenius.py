@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import scipp as sc
 import zntrack
-from kinisi.arrhenius import Arrhenius
+from kinisi.arrhenius import Arrhenius, VogelFulcherTammann
 
 from massband.diffusion.types import DiffusionData
 from massband.utils import sanitize_structure_name
@@ -246,6 +246,337 @@ class KinisiConductivityArrhenius(zntrack.Node):
         # Save figure
         fig.savefig(
             self.figures_path / f"arrhenius_{safe_structure}.png",
+            dpi=300,
+            bbox_inches="tight",
+        )
+
+
+class KinisiConductivityVTF(zntrack.Node):
+    """Perform Vogel-Fulcher-Tammann (VTF) analysis on ionic conductivity.
+
+    The VTF equation: sigma = A * exp(-E_a / (R * (T - T0)))
+    is better suited for ionic liquids that show non-Arrhenius behavior near
+    the glass transition temperature.
+
+    Parameters
+    ----------
+    data : list[dict[str, DiffusionData]]
+        List of conductivity data dictionaries at different temperatures.
+        Each dict maps structure names to their conductivity data.
+    temperatures : list[float]
+        Corresponding temperatures in Kelvin for each conductivity analysis.
+    activation_energy_bound : tuple[float, float]
+        Lower and upper bounds for activation energy prior in eV.
+    pre_exponential_factor_bound : tuple[float, float]
+        Lower and upper bounds for pre-exponential factor prior in S/m.
+    T0_bound : tuple[float, float]
+        Lower and upper bounds for Vogel temperature (T0) in Kelvin.
+    reference : str | Path | None, default=None
+        Path to CSV file containing reference conductivity data.
+    reference_units : str, default="S/m"
+        Units of the reference conductivity coefficients.
+    """
+
+    data: list[dict[str, DiffusionData]] = zntrack.deps()
+    temperatures: list[float] = zntrack.params()
+    figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
+    activation_energy_bound: tuple[float, float] = zntrack.params()
+    pre_exponential_factor_bound: tuple[float, float] = zntrack.params()
+    T0_bound: tuple[float, float] = zntrack.params()
+    reference: str | Path | None = zntrack.deps_path()
+    reference_units: str = zntrack.params("S/m")
+    reference_relative_uncertainty: float = zntrack.params(0.1)
+
+    activation_energy: dict[str, float] = zntrack.metrics()
+    pre_exponential_factor: dict[str, float] = zntrack.metrics()
+    T0: dict[str, float] = zntrack.metrics()
+    reference_activation_energy: dict[str, float] = zntrack.metrics()
+    reference_pre_exponential_factor: dict[str, float] = zntrack.metrics()
+    reference_T0: dict[str, float] = zntrack.metrics()
+
+    def run(self):
+        self.figures_path.mkdir(parents=True, exist_ok=True)
+        self.activation_energy = {}
+        self.pre_exponential_factor = {}
+        self.T0 = {}
+        self.reference_activation_energy = {}
+        self.reference_pre_exponential_factor = {}
+        self.reference_T0 = {}
+
+        reference_data = self._load_reference_data()
+
+        all_structures = set()
+        for data_dict in self.data:
+            all_structures.update(data_dict.keys())
+
+        for structure in all_structures:
+            sigma = {
+                "mean": [data_dict[structure]["mean"] for data_dict in self.data],
+                "var": [data_dict[structure]["var"] for data_dict in self.data],
+            }
+
+            td = sc.DataArray(
+                data=sc.array(
+                    dims=["temperature"],
+                    values=sigma["mean"],
+                    variances=sigma["var"],
+                    unit=sc.Unit("S/m"),
+                ),
+                coords={
+                    "temperature": sc.Variable(
+                        dims=["temperature"],
+                        values=self.temperatures,
+                        unit="K",
+                    )
+                },
+            )
+
+            s = VogelFulcherTammann(
+                td,
+                bounds=[
+                    [
+                        self.activation_energy_bound[0] * sc.Unit("eV"),
+                        self.activation_energy_bound[1] * sc.Unit("eV"),
+                    ],
+                    [
+                        self.pre_exponential_factor_bound[0] * td.data.unit,
+                        self.pre_exponential_factor_bound[1] * td.data.unit,
+                    ],
+                    [
+                        self.T0_bound[0] * sc.Unit("K"),
+                        self.T0_bound[1] * sc.Unit("K"),
+                    ],
+                ],
+            )
+            s.mcmc()
+
+            self.activation_energy[structure] = {
+                "mean": sc.mean(s.activation_energy).value,
+                "std": sc.std(s.activation_energy, ddof=1).value,
+            }
+            self.pre_exponential_factor[structure] = {
+                "mean": sc.mean(s.preexponential_factor).value,
+                "std": sc.std(s.preexponential_factor, ddof=1).value,
+            }
+            self.T0[structure] = {
+                "mean": sc.mean(s.T0).value,
+                "std": sc.std(s.T0, ddof=1).value,
+            }
+
+            s_ref = None
+            if reference_data is not None and structure in reference_data:
+                ref = reference_data[structure]
+                ref_variances = (
+                    ref["conductivity"] * self.reference_relative_uncertainty
+                ) ** 2
+                td_ref = sc.DataArray(
+                    data=sc.array(
+                        dims=["temperature"],
+                        values=ref["conductivity"],
+                        variances=ref_variances,
+                        unit=sc.Unit("S/m"),
+                    ),
+                    coords={
+                        "temperature": sc.Variable(
+                            dims=["temperature"],
+                            values=ref["temperatures"],
+                            unit="K",
+                        )
+                    },
+                )
+
+                s_ref = VogelFulcherTammann(
+                    td_ref,
+                    bounds=[
+                        [
+                            self.activation_energy_bound[0] * sc.Unit("eV"),
+                            self.activation_energy_bound[1] * sc.Unit("eV"),
+                        ],
+                        [
+                            self.pre_exponential_factor_bound[0] * td_ref.data.unit,
+                            self.pre_exponential_factor_bound[1] * td_ref.data.unit,
+                        ],
+                        [
+                            self.T0_bound[0] * sc.Unit("K"),
+                            self.T0_bound[1] * sc.Unit("K"),
+                        ],
+                    ],
+                )
+                s_ref.mcmc()
+
+                self.reference_activation_energy[structure] = {
+                    "mean": sc.mean(s_ref.activation_energy).value,
+                    "std": sc.std(s_ref.activation_energy, ddof=1).value,
+                }
+                self.reference_pre_exponential_factor[structure] = {
+                    "mean": sc.mean(s_ref.preexponential_factor).value,
+                    "std": sc.std(s_ref.preexponential_factor, ddof=1).value,
+                }
+                self.reference_T0[structure] = {
+                    "mean": sc.mean(s_ref.T0).value,
+                    "std": sc.std(s_ref.T0, ddof=1).value,
+                }
+
+            self._plot_vtf(td, s, structure, reference_data, s_ref)
+
+    def _load_reference_data(
+        self,
+    ) -> dict[str, dict[str, float]] | None:
+        """Load reference data from CSV file if provided."""
+        if self.reference is None:
+            return None
+        df = pd.read_csv(self.reference)
+
+        df.columns = df.columns.str.strip()
+        df = df.loc[:, ~df.columns.str.startswith("Unnamed:")]
+
+        temp_col = df.columns[0]
+        structure_cols = df.columns[1:]
+
+        reference_data = {}
+        for structure in structure_cols:
+            reference_data[structure] = {
+                "temperatures": df[temp_col].values,
+                "conductivity": df[structure].values,
+            }
+
+        reference_unit = sc.Unit(self.reference_units)
+        target_unit_sc = sc.Unit("S/m")
+
+        converted_data = {}
+        for structure, data in reference_data.items():
+            ref_values = sc.array(
+                dims=["temperature"],
+                values=data["conductivity"],
+                unit=reference_unit,
+            )
+            converted_values = sc.to_unit(ref_values, target_unit_sc)
+
+            converted_data[structure] = {
+                "temperatures": data["temperatures"],
+                "conductivity": converted_values.values,
+            }
+
+        return converted_data
+
+    def _plot_vtf(
+        self,
+        td,
+        s,
+        structure: str,
+        reference_data: dict | None,
+        s_ref=None,
+    ) -> None:
+        """Create VTF plot with credible intervals."""
+        safe_structure = sanitize_structure_name(structure)
+        credible_intervals = [
+            [16, 84],
+            [2.5, 97.5],
+            [0.15, 99.85],
+        ]
+        alpha = [0.6, 0.4, 0.2]
+        alpha_ref = [0.3, 0.2, 0.1]
+        sigmas = [1, 2, 3]
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        if (
+            s_ref is not None
+            and reference_data is not None
+            and structure in reference_data
+        ):
+            ref_temps = reference_data[structure]["temperatures"]
+            for i, (ci, sigma) in enumerate(zip(credible_intervals, sigmas)):
+                label = f"Ref. ±{sigma}σ" if i == 0 else None
+                ax.fill_between(
+                    1000 / ref_temps,
+                    *np.percentile(s_ref.distribution, ci, axis=1),
+                    alpha=alpha_ref[i],
+                    color="grey",
+                    lw=0,
+                    zorder=1,
+                    label=label,
+                )
+
+        ax.errorbar(
+            1000 / td.coords["temperature"].values,
+            td.data.values,
+            np.sqrt(td.data.variances),
+            marker="o",
+            ls="",
+            color="k",
+            zorder=10,
+            label="Conductivity",
+            capsize=3,
+        )
+
+        if reference_data is not None and structure in reference_data:
+            ref_data = reference_data[structure]
+            ax.scatter(
+                1000 / ref_data["temperatures"],
+                ref_data["conductivity"],
+                marker="x",
+                color="orangered",
+                zorder=9,
+                label="Ref. Data",
+                s=50,
+            )
+
+        for i, (ci, sigma) in enumerate(zip(credible_intervals, sigmas)):
+            ax.fill_between(
+                1000 / td.coords["temperature"].values,
+                *np.percentile(s.distribution, ci, axis=1),
+                alpha=alpha[i],
+                color="#0173B2",
+                lw=0,
+                zorder=5,
+                label=f"±{sigma}σ interval",
+            )
+
+        ax.set_yscale("log")
+        ax.set_xlabel(r"$1000T^{-1}$ / K$^{-1}$")
+        ax.set_ylabel(r"$\sigma$ / S m$^{-1}$")
+
+        ea_mean = self.activation_energy[structure]["mean"]
+        ea_std = self.activation_energy[structure]["std"]
+        T0_mean = self.T0[structure]["mean"]
+        T0_std = self.T0[structure]["std"]
+        text = (
+            f"Sim: $E_a$ = {ea_mean:.3f} ± {ea_std:.3f} eV,"
+            f" $T_0$ = {T0_mean:.0f} ± {T0_std:.0f} K"
+        )
+
+        if structure in self.reference_activation_energy:
+            ref_ea_mean = self.reference_activation_energy[structure]["mean"]
+            ref_ea_std = self.reference_activation_energy[structure]["std"]
+            ref_T0_mean = self.reference_T0[structure]["mean"]
+            ref_T0_std = self.reference_T0[structure]["std"]
+            text += (
+                f"\nRef: $E_a$ = {ref_ea_mean:.3f}"
+                f" ± {ref_ea_std:.3f} eV,"
+                f" $T_0$ = {ref_T0_mean:.0f}"
+                f" ± {ref_T0_std:.0f} K"
+            )
+
+        ax.text(
+            0.05,
+            0.05,
+            text,
+            transform=ax.transAxes,
+            verticalalignment="bottom",
+            bbox={
+                "boxstyle": "round",
+                "facecolor": "white",
+                "alpha": 0.8,
+            },
+            fontsize=9,
+        )
+
+        ax.legend()
+        ax.set_title(f"VTF Analysis: {structure}")
+
+        fig.savefig(
+            self.figures_path / f"vtf_{safe_structure}.png",
             dpi=300,
             bbox_inches="tight",
         )
