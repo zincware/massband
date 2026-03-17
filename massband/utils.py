@@ -1,8 +1,12 @@
 import hashlib
+import logging
 
+import ase
 import jax.numpy as jnp
 import numpy as np
 from jax import jit
+
+log = logging.getLogger(__name__)
 
 
 def sanitize_structure_name(structure: str, max_length: int = 8) -> str:
@@ -59,6 +63,64 @@ def sanitize_structure_name(structure: str, max_length: int = 8) -> str:
         return f"{sanitized}_{hash_suffix}"
 
     return sanitized
+
+
+def resolve_structures(
+    frame: ase.Atoms,
+    structures: list[str] | dict[str, list[int]] | None,
+) -> tuple[dict[str, tuple[tuple[int, ...]]], dict[str, list[float]]]:
+    """Resolve molecular structures to atom index groups and masses.
+
+    Parameters
+    ----------
+    frame : ase.Atoms
+        Reference frame used for SMILES matching and mass extraction.
+    structures : list[str] | dict[str, list[int]] | None
+        - ``None``: group atoms by element symbol (single-atom molecules).
+        - ``list[str]``: SMILES strings matched via ``rdkit2ase``.
+        - ``dict[str, list[int]]``: direct mapping of species name to flat
+          list of atom indices, each treated as a single-atom molecule.
+
+    Returns
+    -------
+    molecules : dict[str, tuple[tuple[int, ...]]]
+        Mapping of species name to tuple of molecule instances,
+        where each instance is a tuple of atom indices.
+    masses : dict[str, list[float]]
+        Mapping of species name to list of atomic masses for one
+        molecule instance.
+    """
+    import rdkit2ase
+
+    molecules: dict[str, tuple[tuple[int, ...]]] = {}
+    masses: dict[str, list[float]] = {}
+
+    if structures is None:
+        symbol_map = frame.symbols.indices()
+        for k, v in symbol_map.items():
+            molecules[k] = tuple((int(i),) for i in v)
+            masses[k] = [frame.get_masses()[v[0]]]
+    elif isinstance(structures, dict):
+        all_masses = frame.get_masses()
+        for name, indices in structures.items():
+            molecules[name] = tuple((idx,) for idx in indices)
+            if indices:
+                masses[name] = [all_masses[indices[0]]]
+            else:
+                masses[name] = []
+    else:
+        graph = rdkit2ase.ase2networkx(frame, suggestions=structures)
+        for structure in structures:
+            matches = rdkit2ase.match_substructure(
+                rdkit2ase.networkx2ase(graph), smiles=structure
+            )
+            if not matches:
+                log.warning(f"No matches found for structure {structure}")
+                continue
+            molecules[structure] = matches
+            masses[structure] = list(frame.get_masses()[list(matches[0])])
+
+    return molecules, masses
 
 
 def _validate_unwrap_inputs(

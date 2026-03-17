@@ -8,7 +8,6 @@ import ase
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
-import rdkit2ase
 import scipp as sc
 import scipy.stats as st
 import znh5md
@@ -18,7 +17,7 @@ from kinisi.analyze import DiffusionAnalyzer
 from massband.abc import ComparisonResults
 from massband.comparison_utils import create_bar_comparison, create_overlay_plot
 from massband.diffusion.types import DiffusionData
-from massband.utils import sanitize_structure_name
+from massband.utils import resolve_structures, sanitize_structure_name
 
 log = logging.getLogger(__name__)
 
@@ -48,9 +47,11 @@ class KinisiSelfDiffusion(zntrack.Node):
         Path to the trajectory file in h5md format.
     data: znh5md.IO | list[ase.Atoms] | None, default None
         znh5md.IO object for trajectory data, as an alternative to 'file'.
-    structures : list[str] | None
-        List of SMILES strings representing molecular structures to analyze.
-        If None, analyzes all atomic species individually.
+    structures : list[str] | dict[str, list[int]] | None
+        Molecular structures to analyze. Accepts SMILES strings (matched via
+        rdkit2ase), a dict mapping species names to flat atom-index lists
+        (each index becomes a single-atom molecule), or None to group by
+        element symbol.
     start : int, default=0
         Starting frame index for trajectory analysis.
     stop : int | None, default=None
@@ -102,7 +103,7 @@ class KinisiSelfDiffusion(zntrack.Node):
     """
 
     data: znh5md.IO | list[ase.Atoms] = zntrack.deps()
-    structures: list[str] | None = zntrack.params()
+    structures: list[str] | dict[str, list[int]] | None = zntrack.params()
     start: int = zntrack.params(0)
     stop: int | None = zntrack.params(None)
     step: int = zntrack.params(1)
@@ -426,23 +427,7 @@ class KinisiSelfDiffusion(zntrack.Node):
             io.include = ["position", "box"]
 
         frames = io[self.start : self.stop : self.step]
-        graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
-        molecules: dict[str, tuple[tuple[int, ...]]] = {}
-        masses: dict[str, list[int]] = {}
-        if self.structures is None:
-            symbol_map = frames[0].symbols.indices()
-            for k, v in symbol_map.items():
-                molecules[k] = tuple((int(i),) for i in v)
-                masses[k] = [frames[0].get_masses()[v[0]]]
-        else:
-            for structure in self.structures:
-                matches = rdkit2ase.match_substructure(
-                    rdkit2ase.networkx2ase(graph), smiles=structure
-                )
-                if not matches:
-                    log.warning(f"No matches found for structure {structure}")
-                molecules[structure] = matches
-                masses[structure] = list(frames[0].get_masses()[list(matches[0])])
+        molecules, masses = resolve_structures(frames[0], self.structures)
 
         for structure in molecules:
             print(f"Calculating diffusion for {structure}")

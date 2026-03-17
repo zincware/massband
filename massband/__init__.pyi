@@ -4,12 +4,17 @@ from .conductivity import (
     NernstEinsteinIonicConductivity,
 )
 from .coordination import CoordinationNumber
-from .diffusion import KinisiDiffusionArrhenius, KinisiDiffusionVTF, KinisiSelfDiffusion, KinisiYehHummer
+from .diffusion import (
+    KinisiDiffusionArrhenius,
+    KinisiDiffusionVTF,
+    KinisiSelfDiffusion,
+    KinisiYehHummer,
+)
 from .io import LoadIOFile
 from .pmf import PotentialOfMeanForce
 from .radius_of_gyration import RadiusOfGyration
 from .rdf import RadialDistributionFunction
-from .utils import sanitize_structure_name
+from .utils import resolve_structures, sanitize_structure_name
 
 __all__ = [
     "RadialDistributionFunction",
@@ -23,6 +28,7 @@ __all__ = [
     "RadiusOfGyration",
     "NernstEinsteinIonicConductivity",
     "KinisiEinsteinHelfandIonicConductivity",
+    "resolve_structures",
     "sanitize_structure_name",
     "LoadIOFile",
 ]
