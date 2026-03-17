@@ -4,14 +4,13 @@ from pathlib import Path
 import ase
 import matplotlib.pyplot as plt
 import numpy as np
-import rdkit2ase
 import scipp as sc
 import znh5md
 import zntrack
 from kinisi.analyze import ConductivityAnalyzer
 from rdkit import Chem
 
-from massband.utils import sanitize_structure_name
+from massband.utils import resolve_structures, sanitize_structure_name
 
 log = logging.getLogger(__name__)
 
@@ -26,9 +25,11 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     ----------
     data: znh5md.IO | list[ase.Atoms] | None, default None
         znh5md.IO object for trajectory data, as an alternative to 'file'.
-    structures : list[str]
-        List of SMILES strings representing ionic structures in the system.
-        Must include both cations and anions (e.g., ["[Li+]", "F[P-](F)(F)(F)(F)F"]).
+    structures : list[str] | dict[str, list[int]]
+        Ionic structures in the system. Accepts SMILES strings (matched via
+        rdkit2ase) or a dict mapping SMILES strings to flat atom-index lists
+        (each index becomes a single-atom molecule). Dict keys must be valid
+        SMILES for charge extraction.
     start : int, default=0
         Starting frame index for trajectory analysis.
     stop : int | None, default=None
@@ -81,7 +82,7 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
     """
 
     data: znh5md.IO | list[ase.Atoms] = zntrack.deps()
-    structures: list[str] = zntrack.params()
+    structures: list[str] | dict[str, list[int]] = zntrack.params()
     start: int = zntrack.params(0)
     stop: int | None = zntrack.params(None)
     step: int = zntrack.params(1)
@@ -109,29 +110,21 @@ class KinisiEinsteinHelfandIonicConductivity(zntrack.Node):
             io.include = ["position", "box"]
         frames = io[self.start : self.stop : self.step]
 
-        graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
-        molecules: dict[str, tuple[tuple[int, ...]]] = {}
-        masses: dict[str, list[int]] = {}
-        charge: dict[str, int] = {}
+        molecules, masses = resolve_structures(frames[0], self.structures)
+        if not molecules:
+            raise ValueError("No structures matched any atoms in the trajectory.")
 
         species = []
-
-        for structure in self.structures:
-            matches = rdkit2ase.match_substructure(
-                rdkit2ase.networkx2ase(graph), smiles=structure
-            )
-            if not matches:
-                raise ValueError(f"No matches found for structure: {structure}")
-            molecules[structure] = matches
-            masses[structure] = list(frames[0].get_masses()[list(matches[0])])
+        for structure, matches in molecules.items():
             mol = Chem.MolFromSmiles(structure)
-            if mol is not None:
-                charge[structure] = Chem.GetFormalCharge(mol)
-
+            if mol is None:
+                raise ValueError(
+                    f"Cannot parse SMILES '{structure}' for charge extraction."
+                )
             species.append(
                 Species(
                     indices=[list(x) for x in matches],
-                    masses=list(frames[0].get_masses()[list(matches[0])]),
+                    masses=masses[structure],
                     charge=Chem.GetFormalCharge(mol),
                 )
             )

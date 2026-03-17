@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pint
 import plotly.graph_objects as go
-import rdkit2ase
 import znh5md
 import zntrack
 from ase.data import atomic_numbers
@@ -31,7 +30,7 @@ from massband.comparison_utils import (
     create_difference_plot,
     create_overlay_plot,
 )
-from massband.utils import sanitize_structure_name
+from massband.utils import resolve_structures, sanitize_structure_name
 
 log = logging.getLogger(__name__)
 
@@ -543,9 +542,11 @@ class RadialDistributionFunction(zntrack.Node):
     ----------
     data: znh5md.IO | list[ase.Atoms]| None, default None
         znh5md.IO object for trajectory data, as an alternative to 'file'.
-    structures : list of str or None, default None
-        SMILES strings for molecular structures. If provided, computes COM-COM RDFs.
-        If None, computes atom-atom RDFs grouped by element.
+    structures : list[str] | dict[str, list[int]] | None, default None
+        Molecular structures to analyze. Accepts SMILES strings (matched via
+        rdkit2ase for COM-COM RDFs), a dict mapping species names to flat
+        atom-index lists (each index becomes a single-atom molecule), or
+        None to group by element for atom-atom RDFs.
     bin_width : float, default 0.05
         Width of distance bins in Angstrom.
     start : int, default 0
@@ -581,7 +582,7 @@ class RadialDistributionFunction(zntrack.Node):
     """
 
     data: znh5md.IO | list[ase.Atoms] = zntrack.deps()
-    structures: list[str] | None = zntrack.params(None)
+    structures: list[str] | dict[str, list[int]] | None = zntrack.params(None)
     bin_width: float = zntrack.params(0.05)
     start: int = zntrack.params(0)
     stop: int | None = zntrack.params(None)
@@ -856,26 +857,12 @@ class RadialDistributionFunction(zntrack.Node):
             log.info(f"Extracted energy ensemble: shape {energy_ensemble.shape}")
 
         # --- Molecule Identification ---
-        graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
-        molecules: dict[str, tuple[tuple[int, ...]]] = {}
-        masses: dict[str, np.ndarray] = {}
-
+        molecules, masses_list = resolve_structures(frames[0], self.structures)
+        masses: dict[str, np.ndarray] = {k: np.array(v) for k, v in masses_list.items()}
         if not self.structures:
             log.info("No structures provided, grouping by element for atom-atom RDFs.")
-            molecules = {
-                k: tuple((i,) for i in v) for k, v in frames[0].symbols.indices().items()
-            }
         else:
             log.info("Structures provided. Grouping atoms for COM-COM RDFs.")
-            for structure in self.structures:
-                matches = rdkit2ase.match_substructure(
-                    rdkit2ase.networkx2ase(graph), smiles=structure
-                )
-                if not matches:
-                    log.warning(f"No matches found for structure {structure}")
-                    continue
-                molecules[structure] = matches
-                masses[structure] = np.array(frames[0].get_masses()[list(matches[0])])
 
         # --- Pre-computation Step: Get all particle positions (Atoms or COMs) ---
         all_positions = jnp.array([frame.get_positions() for frame in frames])

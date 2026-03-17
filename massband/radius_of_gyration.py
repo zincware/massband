@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pint
-import rdkit2ase
 import znh5md
 import zntrack
 from rich.progress import (
@@ -20,7 +19,7 @@ from rich.progress import (
 )
 from scipy.signal import correlate
 
-from massband.utils import sanitize_structure_name
+from massband.utils import resolve_structures, sanitize_structure_name
 
 log = logging.getLogger(__name__)
 
@@ -101,8 +100,10 @@ class RadiusOfGyration(zntrack.Node):
         Path to trajectory file in H5MD format.
     data: znh5md.IO | list[ase.Atoms] | None, default None
         znh5md.IO object for trajectory data, as an alternative to 'file'.
-    structures : list[str]
-        SMILES strings for molecular structures to analyze.
+    structures : list[str] | dict[str, list[int]]
+        Molecular structures to analyze. Accepts SMILES strings (matched via
+        rdkit2ase) or a dict mapping species names to flat atom-index lists
+        (each index becomes a single-atom molecule).
     uncertainties : str or None, default None
         Name of the property containing ensemble energies (e.g., "energy_ensemble").
         If provided, computes uncertainty-aware ROG using the Cumulant Expansion
@@ -112,7 +113,7 @@ class RadiusOfGyration(zntrack.Node):
     """
 
     data: znh5md.IO | list[ase.Atoms] = zntrack.deps()
-    structures: list[str] = zntrack.params(default_factory=list)
+    structures: list[str] | dict[str, list[int]] = zntrack.params(default_factory=list)
     figures_path: Path = zntrack.outs_path(zntrack.nwd / "figures")
     data_path: Path = zntrack.outs_path(zntrack.nwd / "data")
     rog: dict[str, ROGData] = zntrack.metrics()
@@ -188,22 +189,10 @@ class RadiusOfGyration(zntrack.Node):
             log.info(f"Extracted energy ensemble: shape {energy_ensemble.shape}")
 
         # --- Molecule Identification ---
-        graph = rdkit2ase.ase2networkx(frames[0], suggestions=self.structures)
-        molecules: dict[str, tuple[tuple[int, ...]]] = {}
-        masses: dict[str, np.ndarray] = {}
-
         if not self.structures:
             raise ValueError("No structures provided for ROG calculation.")
-        else:
-            for structure in self.structures:
-                matches = rdkit2ase.match_substructure(
-                    rdkit2ase.networkx2ase(graph), smiles=structure
-                )
-                if not matches:
-                    log.warning(f"No matches found for structure {structure}")
-                    continue
-                molecules[structure] = matches
-                masses[structure] = np.array(frames[0].get_masses()[list(matches[0])])
+        molecules, masses_list = resolve_structures(frames[0], self.structures)
+        masses: dict[str, np.ndarray] = {k: np.array(v) for k, v in masses_list.items()}
 
         # --- ROG Calculation ---
         with Progress(
